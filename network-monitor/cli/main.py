@@ -4,14 +4,15 @@ NetPulse CLI - Command Line Interface for Network Monitoring
 """
 
 import sys
+import os
 import time
 from datetime import datetime
 from typing import List, Optional
 
-# Add parent directory to path for imports
-sys.path.insert(0, '/Users/yourusername/Projects/network-monitor')  # Update this path
+# Add parent directory to path for imports - dynamic path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.models import Device
+from app.models.device import Device, DeviceStatus
 
 
 class DeviceCLI:
@@ -48,7 +49,24 @@ class DeviceCLI:
         retry = input("Retry count (default 2, min 1): ").strip()
         retry = int(retry) if retry else 2
         
-        device = Device(device_id, name, ip, retry_count=retry)
+        # Optional quality thresholds
+        use_quality = input("Enable quality monitoring? (y/n, default y): ").strip().lower()
+        if use_quality != 'n':
+            max_latency = input("Max latency before degraded (ms, default 100): ").strip()
+            max_latency = float(max_latency) if max_latency else 100.0
+            critical_latency = input("Critical latency threshold (ms, default 500): ").strip()
+            critical_latency = float(critical_latency) if critical_latency else 500.0
+            
+            from app.models.device import QualityThresholds
+            thresholds = QualityThresholds(
+                max_latency_ms=max_latency,
+                critical_latency_ms=critical_latency
+            )
+            device = Device(device_id, name, ip, retry_count=retry, 
+                          quality_thresholds=thresholds)
+        else:
+            device = Device(device_id, name, ip, retry_count=retry)
+        
         self.devices[device_id] = device
         print(f"✅ Added device: {name} ({ip})")
     
@@ -74,25 +92,37 @@ class DeviceCLI:
             print("\n📭 No devices configured")
             return
         
-        print("\n" + "="*90)
-        print(f"{'ID':<15} {'Name':<20} {'IP Address':<15} {'Retries':<8} {'Status':<10} {'Fails':<10}")
-        print("="*90)
+        print("\n" + "="*100)
+        print(f"{'ID':<15} {'Name':<20} {'IP Address':<15} {'Retries':<8} {'Status':<12} {'Fails':<8} {'Quality':<8}")
+        print("="*100)
         
         for device in self.devices.values():
-            status_icon = "🟢" if device.status is True else "🔴" if device.status is False else "🟡"
+            # Status icons (CLI only)
+            if device.status == DeviceStatus.UP:
+                status_icon = "🟢"
+            elif device.status == DeviceStatus.DEGRADED:
+                status_icon = "🟡"
+            elif device.status == DeviceStatus.DOWN:
+                status_icon = "🔴"
+            else:
+                status_icon = "⚪"
+            
             fails_display = f"{device.fail_count}/{device.retry_count}"
+            quality_display = f"{device.quality_score:.0f}%" if device.quality_score else "N/A"
             
             print(f"{device.device_id:<15} {device.name:<20} {device.ip_address:<15} "
-                  f"{device.retry_count:<8} {status_icon} {device.status_text:<6} {fails_display:<10}")
+                  f"{device.retry_count:<8} {status_icon} {device.status_text:<10} "
+                  f"{fails_display:<8} {quality_display:<8}")
         
-        print("="*90)
+        print("="*100)
         
         # Summary
-        up = sum(1 for d in self.devices.values() if d.status is True)
-        down = sum(1 for d in self.devices.values() if d.status is False)
-        unknown = sum(1 for d in self.devices.values() if d.status is None)
+        up = sum(1 for d in self.devices.values() if d.status == DeviceStatus.UP)
+        degraded = sum(1 for d in self.devices.values() if d.status == DeviceStatus.DEGRADED)
+        down = sum(1 for d in self.devices.values() if d.status == DeviceStatus.DOWN)
+        unknown = sum(1 for d in self.devices.values() if d.status == DeviceStatus.UNKNOWN)
         
-        print(f"\n📊 Summary: 🟢 {up} UP | 🔴 {down} DOWN | 🟡 {unknown} UNKNOWN")
+        print(f"\n📊 Summary: 🟢 {up} UP | 🟡 {degraded} DEGRADED | 🔴 {down} DOWN | ⚪ {unknown} UNKNOWN")
     
     def remove_device(self):
         """Remove a device interactively"""
@@ -111,15 +141,24 @@ class DeviceCLI:
     
     def simulate_ping(self, ip: str) -> tuple:
         """Simulate ping for testing (will be replaced with real ping)"""
-        # This is a placeholder - real ping service coming next
         import random
-        # Simulate: 90% success rate for testing
-        is_up = random.random() > 0.1
-        latency = random.uniform(5, 100) if is_up else None
-        return is_up, latency
+        
+        # Simulate realistic network conditions
+        # 85% success rate, with occasional high latency
+        rand = random.random()
+        
+        if rand < 0.85:  # 85% success
+            # Latency varies: 5-150ms normally, sometimes high
+            if rand < 0.05:  # 5% chance of high latency
+                latency = random.uniform(150, 500)
+            else:
+                latency = random.uniform(5, 100)
+            return True, latency
+        else:
+            return False, None
     
     def monitor_continuous(self, interval: int = 5):
-        """Continuous monitoring loop"""
+        """Continuous monitoring loop with quality metrics"""
         if not self.devices:
             print("\n❌ No devices to monitor. Add devices first.")
             return
@@ -161,26 +200,59 @@ class DeviceCLI:
             self.running = False
     
     def _display_check_result(self, result: dict):
-        """Display a single check result"""
+        """Display a single check result with quality metrics"""
         timestamp = result['timestamp'].strftime('%H:%M:%S')
-        status_icon = "🟢" if result['current_status'] is True else "🔴" if result['current_status'] is False else "🟡"
+        status = result['current_status']
+        
+        # Status icons (CLI only)
+        if status == "UP":
+            status_icon = "🟢"
+        elif status == "DEGRADED":
+            status_icon = "🟡"
+        elif status == "DOWN":
+            status_icon = "🔴"
+        else:
+            status_icon = "⚪"
+        
         latency_str = f"{result['latency_ms']:.1f}ms" if result['latency_ms'] else "N/A"
+        
+        # Show quality info if available
+        quality_info = ""
+        if result.get('quality') and result['quality'].get('quality_score'):
+            score = result['quality']['quality_score']
+            quality_info = f" | Quality: {score:.0f}%"
         
         # Highlight status changes
         if result['status_changed']:
             print(f"\n⚠️  {status_icon} [{timestamp}] {result['name']:20} ({result['ip']})")
-            if result['transition_type'] == 'up_to_down':
-                print(f"   ❌ Device is now DOWN (after {result['fail_count']} failures)")
+            if result['transition_type'] == 'up_to_degraded':
+                print(f"   ⚠️  Device is now DEGRADED (performance issues){quality_info}")
+                if result.get('quality', {}).get('issues'):
+                    print(f"   Issues: {', '.join(result['quality']['issues'][:2])}")
+            elif result['transition_type'] == 'degraded_to_up':
+                print(f"   ✅ Device recovered to UP{quality_info}")
+            elif result['transition_type'] == 'up_to_down':
+                print(f"   ❌ Device is now DOWN (unreachable)")
+            elif result['transition_type'] == 'degraded_to_down':
+                print(f"   ❌ Device is now DOWN (from degraded state)")
             elif result['transition_type'] == 'down_to_up':
-                print(f"   ✅ Device is now UP (latency: {latency_str})")
+                print(f"   ✅ Device is now UP{quality_info}")
+            elif result['transition_type'] == 'down_to_degraded':
+                print(f"   ⚠️  Device is now DEGRADED (recovering){quality_info}")
             elif result['transition_type'] == 'initial_up':
-                print(f"   ✅ Device is UP (initial detection, latency: {latency_str})")
+                print(f"   ✅ Device is UP{quality_info}")
+            elif result['transition_type'] == 'initial_degraded':
+                print(f"   ⚠️  Device is DEGRADED{quality_info}")
+                if result.get('quality', {}).get('issues'):
+                    print(f"   Issues: {', '.join(result['quality']['issues'][:2])}")
             elif result['transition_type'] == 'initial_down':
                 print(f"   ❌ Device is DOWN (initial detection)")
+            else:
+                print(f"   Status changed to {status}")
         else:
             # Normal status display
             print(f"   {status_icon} [{timestamp}] {result['name']:20} "
-                  f"- {result['status_text']:6} (latency: {latency_str:8} | fails: {result['fail_count']}/{result['retry_count']})")
+                  f"- {status:8} (latency: {latency_str:8} | fails: {result['fail_count']}/{result['retry_count']}{quality_info})")
     
     def _display_final_summary(self):
         """Display final status summary"""
@@ -188,8 +260,17 @@ class DeviceCLI:
         print("-" * 60)
         
         for device in self.devices.values():
-            icon = "🟢" if device.status is True else "🔴" if device.status is False else "🟡"
-            print(f"{icon} {device.name:20} ({device.ip_address:15}) - {device.status_text}")
+            if device.status == DeviceStatus.UP:
+                icon = "🟢"
+            elif device.status == DeviceStatus.DEGRADED:
+                icon = "🟡"
+            elif device.status == DeviceStatus.DOWN:
+                icon = "🔴"
+            else:
+                icon = "⚪"
+            
+            quality_str = f" (Q:{device.quality_score:.0f}%)" if device.quality_score else ""
+            print(f"{icon} {device.name:20} ({device.ip_address:15}) - {device.status_text}{quality_str}")
     
     def run(self):
         """Main CLI loop"""
@@ -230,9 +311,23 @@ def main():
     # Add some test devices for demonstration
     if not cli.devices:
         print("\n📝 Adding example devices...")
+        from app.models.device import QualityThresholds
+        
+        # Gateway with good thresholds
         cli.devices['gw1'] = Device('gw1', 'Gateway', '10.3.104.2', retry_count=2)
+        
+        # Google DNS with lower thresholds (more sensitive)
         cli.devices['dns1'] = Device('dns1', 'Google DNS', '8.8.8.8', retry_count=1)
-        cli.devices['airtel1'] = Device('airtel1', 'Airtel Ikeja', '10.2.104.6', retry_count=1)
+        
+        # Airtel with custom thresholds for degraded detection
+        thresholds = QualityThresholds(
+            max_latency_ms=50.0,
+            critical_latency_ms=200.0,
+            max_jitter_ms=20.0,
+            packet_loss_threshold=5.0
+        )
+        cli.devices['airtel1'] = Device('airtel1', 'Airtel Ikeja', '10.2.104.6', 
+                                        retry_count=1, quality_thresholds=thresholds)
     
     cli.run()
 

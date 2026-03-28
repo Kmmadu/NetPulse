@@ -1,0 +1,41 @@
+# Python
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*.so
+.python-version
+
+# Database
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+*.db
+*.sqlite
+
+# Configuration (sensitive)
+.env
+config/settings.json
+config/local.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Distribution
+dist/
+build/
+*.egg-info/

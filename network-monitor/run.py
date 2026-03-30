@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-NetPulse - Simple Network Monitor
-Just add devices by name and IP - everything else has smart defaults
+NetPulse - Simple Network Monitor with Downtime Tracking
 """
 
 import sys
@@ -13,8 +12,29 @@ from app.models.device import Device, DeviceStatus
 from app.core.monitor_engine import MonitoringEngine
 
 
+def format_duration(seconds):
+    """Format seconds into human-readable duration"""
+    if not seconds:
+        return ""
+    
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    elif seconds < 3600:
+        minutes = int(seconds / 60)
+        remaining_seconds = int(seconds % 60)
+        if remaining_seconds > 0:
+            return f"{minutes}m {remaining_seconds}s"
+        return f"{minutes}m"
+    else:
+        hours = int(seconds / 3600)
+        remaining_minutes = int((seconds % 3600) / 60)
+        if remaining_minutes > 0:
+            return f"{hours}h {remaining_minutes}m"
+        return f"{hours}h"
+
+
 def print_result(result):
-    """Display monitoring results"""
+    """Display with downtime tracking"""
     status = result['current_status']
     
     if status == "UP":
@@ -34,39 +54,52 @@ def print_result(result):
     if result.get('avg_latency_ms'):
         quality_info += f" | avg: {result['avg_latency_ms']:.0f}ms"
     
+    # Show duration for degraded/down
     duration = ""
     if status == "DEGRADED" and result.get('degraded_seconds'):
-        secs = result['degraded_seconds']
-        duration = f" ({secs:.0f}s)" if secs < 60 else f" ({secs/60:.1f}m)"
+        duration = f" ({format_duration(result['degraded_seconds'])})"
     elif status == "DOWN" and result.get('downtime_seconds'):
-        secs = result['downtime_seconds']
-        duration = f" ({secs:.0f}s)" if secs < 60 else f" ({secs/60:.1f}m)"
+        duration = f" ({format_duration(result['downtime_seconds'])})"
     
+    # Status change alerts with duration
     if result.get('status_changed'):
         print(f"\n⚠️  {icon} {result['name']} is now {status}{duration}!")
         if result.get('transition_type') == 'up_to_degraded':
             print(f"   Performance: {quality_info.strip(' | ')}")
+        elif result.get('transition_type') == 'down_to_up':
+            # Show how long it was down when it recovers
+            old_downtime = result.get('downtime_seconds')
+            if old_downtime:
+                print(f"   Device was down for {format_duration(old_downtime)}")
     else:
         print(f"   {icon} {result['name']:20} - {status:8} (latency: {latency:8}){quality_info}{duration}")
 
 
 def list_devices(engine):
-    """List all devices"""
+    """List all devices with status and downtime"""
     devices = engine.get_devices()
     if not devices:
         print("\n📭 No devices configured")
         return
     
-    print("\n" + "="*70)
-    print(f"{'Name':<25} {'IP Address':<20} {'Status':<10}")
-    print("="*70)
+    print("\n" + "="*85)
+    print(f"{'Name':<25} {'IP Address':<20} {'Status':<12} {'Duration':<20}")
+    print("="*85)
     
     for device in devices:
         status = device.status.value if device.status else "UNKNOWN"
         icon = "🟢" if status == "UP" else "🟡" if status == "DEGRADED" else "🔴" if status == "DOWN" else "⚪"
-        print(f"{icon} {device.name:<24} {device.ip_address:<20} {status:<10}")
+        
+        # Show duration for DOWN or DEGRADED
+        duration = ""
+        if status == "DOWN" and device.downtime_seconds:
+            duration = format_duration(device.downtime_seconds)
+        elif status == "DEGRADED" and hasattr(device, 'degraded_seconds') and device.degraded_seconds:
+            duration = format_duration(device.degraded_seconds)
+        
+        print(f"{icon} {device.name:<24} {device.ip_address:<20} {status:<12} {duration:<20}")
     
-    print("="*70)
+    print("="*85)
     print("\n💡 Tip: Devices show DEGRADED if latency >200ms or packet loss >10%")
 
 
@@ -143,7 +176,6 @@ def update_device(engine):
     if updates:
         if engine.update_device(device_id, **updates):
             print(f"\n✅ Device updated successfully!")
-            # Show updated info
             updated = next((d for d in engine.get_devices() if d.device_id == device_id), None)
             if updated:
                 print(f"   Now: {updated.name} ({updated.ip_address})")
@@ -190,6 +222,10 @@ def show_help():
     • 🟡 DEGRADED = Device is reachable but slow (>200ms latency or >10% packet loss)
     • 🔴 DOWN = Device is unreachable after 2 failures
     
+    Downtime Tracking:
+    • When a device goes DOWN, it shows how long it's been down
+    • When it recovers, it shows how long it was down
+    
     Default Thresholds (work for most networks):
     • DOWN after 2 consecutive failures
     • DEGRADED if latency >200ms or packet loss >10%
@@ -203,7 +239,7 @@ def main():
     print("""
     ╔═══════════════════════════════════════╗
     ║         NetPulse v1.0                 ║
-    ║    Simple Network Monitor             ║
+    ║    Network Monitor with Downtime      ║
     ║    Just add name and IP               ║
     ╚═══════════════════════════════════════╝
     """)
@@ -248,6 +284,7 @@ def main():
             print("   🟢 UP = Normal")
             print("   🟡 DEGRADED = High latency (>200ms) or packet loss (>10%)")
             print("   🔴 DOWN = Unreachable after 2 failures")
+            print("   📊 Shows downtime duration when DOWN")
             print("   Press Ctrl+C to return to menu\n")
             
             engine.monitor_forever(

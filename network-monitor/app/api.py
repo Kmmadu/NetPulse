@@ -20,6 +20,8 @@ from contextlib import asynccontextmanager
 
 from app.core.monitor_engine import MonitoringEngine
 from app.models.device import Device, DeviceStatus
+from app.auth import UserAuth
+import secrets
 
 
 # Global variables for monitoring thread
@@ -28,6 +30,9 @@ _monitoring_active = False
 _monitoring_interval = 30
 _monitoring_engine = None
 
+# Session storage (in production, use Redis or JWT)
+sessions = {}
+
 
 # ==================== Pydantic Models ====================
 
@@ -35,12 +40,14 @@ class DeviceCreate(BaseModel):
     """Model for creating a new device"""
     name: str = Field(..., description="Device name", example="Gateway")
     ip: str = Field(..., description="IP address", example="192.168.1.1")
+    group: Optional[str] = Field("Default", description="Device group")
 
 
 class DeviceUpdate(BaseModel):
     """Model for updating a device"""
     name: Optional[str] = Field(None, description="Device name")
     ip: Optional[str] = Field(None, description="IP address")
+    group: Optional[str] = Field(None, description="Device group")
 
 
 class DeviceResponse(BaseModel):
@@ -48,6 +55,7 @@ class DeviceResponse(BaseModel):
     id: str
     name: str
     ip: str
+    group: str
     status: str
     latency_ms: Optional[float] = None
     packet_loss_percent: float = 0.0
@@ -86,6 +94,17 @@ class MonitoringStatus(BaseModel):
     last_check: Optional[str] = None
 
 
+class RegisterRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 # ==================== Helper Functions ====================
 
 def get_engine():
@@ -120,12 +139,10 @@ def format_downtime(seconds: Optional[float]) -> Optional[str]:
 def _device_to_response(device) -> DeviceResponse:
     """Convert device model to API response - with downtime tracking"""
     try:
-        # Get last check time - using _last_check attribute
         last_check = None
         if hasattr(device, '_last_check') and device._last_check:
             last_check = device._last_check.isoformat()
         
-        # Get downtime
         downtime_seconds = None
         if hasattr(device, 'downtime_seconds') and device.downtime_seconds:
             downtime_seconds = device.downtime_seconds
@@ -134,6 +151,7 @@ def _device_to_response(device) -> DeviceResponse:
             id=device.device_id,
             name=device.name,
             ip=device.ip_address,
+            group=getattr(device, 'device_group', 'Default'),
             status=device.status.value if device.status else "UNKNOWN",
             latency_ms=device._last_latency if hasattr(device, '_last_latency') else None,
             packet_loss_percent=0.0,
@@ -148,6 +166,7 @@ def _device_to_response(device) -> DeviceResponse:
             id=getattr(device, 'device_id', 'unknown'),
             name=getattr(device, 'name', 'unknown'),
             ip=getattr(device, 'ip_address', 'unknown'),
+            group="Default",
             status="UNKNOWN",
             latency_ms=None,
             packet_loss_percent=0.0,
@@ -160,7 +179,7 @@ def _device_to_response(device) -> DeviceResponse:
 
 def run_monitoring_loop(interval):
     """Background monitoring thread function"""
-    global _monitoring_active, _monitoring_interval, _monitoring_thread
+    global _monitoring_active
     
     engine = get_engine()
     
@@ -168,10 +187,8 @@ def run_monitoring_loop(interval):
         cycle_start = time.time()
         
         try:
-            # Check all devices
             results = engine.check_all_devices()
             
-            # Log status changes
             for result in results:
                 if result.get('status_changed'):
                     status = result['current_status']
@@ -190,14 +207,12 @@ def run_monitoring_loop(interval):
         except Exception as e:
             print(f"[Monitor] Error: {e}")
         
-        # Wait for next cycle
         elapsed = time.time() - cycle_start
         sleep_time = max(0, interval - elapsed)
         if sleep_time > 0 and _monitoring_active:
             time.sleep(sleep_time)
     
     print("[Monitor] Monitoring stopped")
-    _monitoring_thread = None
 
 
 # ==================== FastAPI App ====================
@@ -206,7 +221,7 @@ def run_monitoring_loop(interval):
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup/shutdown"""
     print("Starting NetPulse API...")
-    get_engine()  # Initialize engine
+    get_engine()
     print(f"Loaded {len(get_engine().get_devices())} devices")
     yield
     print("Shutting down NetPulse API...")
@@ -242,16 +257,132 @@ async def root():
             "devices": "/api/devices",
             "status": "/api/status",
             "history": "/api/history/{device_id}",
-            "monitoring": "/api/monitoring/status"
+            "monitoring": "/api/monitoring/status",
+            "auth": "/api/auth/register, /api/auth/login"
         }
     }
 
 
-# ==================== Device Endpoints ====================
+# ==================== Authentication Endpoints ====================
 
-@app.get("/api/devices", response_model=List[DeviceResponse], tags=["Devices"])
+@app.post("/api/auth/register", tags=["Authentication"])
+async def register(request: RegisterRequest):
+    """Register a new user"""
+    auth = UserAuth()
+    user_id = auth.register(request.username, request.email, request.password)
+    if user_id:
+        token = secrets.token_urlsafe(32)
+        sessions[token] = user_id
+        return {"success": True, "token": token, "user_id": user_id}
+    return {"success": False, "error": "Username or email already exists"}
+
+
+@app.post("/api/auth/login", tags=["Authentication"])
+async def login(request: LoginRequest):
+    """Login user"""
+    auth = UserAuth()
+    user = auth.login(request.username, request.password)
+    if user:
+        token = secrets.token_urlsafe(32)
+        sessions[token] = user['id']
+        return {
+            "success": True,
+            "token": token,
+            "user_id": user['id'],
+            "username": user['username'],
+            "alert_email": user.get('alert_email')
+        }
+    return {"success": False, "error": "Invalid credentials"}
+
+
+@app.post("/api/auth/logout", tags=["Authentication"])
+async def logout(token: str):
+    """Logout user"""
+    if token in sessions:
+        del sessions[token]
+    return {"success": True}
+
+
+# ==================== User Device Endpoints ====================
+
+@app.get("/api/user/devices", tags=["User"])
+async def get_user_devices(token: str):
+    """Get devices for logged in user"""
+    if token not in sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    auth = UserAuth()
+    devices = auth.get_user_devices(sessions[token])
+    return devices
+
+
+@app.post("/api/user/devices", tags=["User"])
+async def add_user_device(token: str, name: str, ip: str, group: str = "Default"):
+    """Add device for user"""
+    if token not in sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    auth = UserAuth()
+    user_id = sessions[token]
+    
+    device_id = auth.add_user_device(user_id, name, ip, group)
+    if device_id:
+        return {"success": True, "device_id": device_id}
+    return {"success": False, "error": "Device already exists"}
+
+
+@app.put("/api/user/devices/{device_id}", tags=["User"])
+async def update_user_device(token: str, device_id: str, name: str = None, ip: str = None, group: str = None):
+    """Update user device"""
+    if token not in sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    auth = UserAuth()
+    if auth.update_user_device(sessions[token], device_id, name, ip, group):
+        return {"success": True}
+    return {"success": False}
+
+
+@app.delete("/api/user/devices/{device_id}", tags=["User"])
+async def delete_user_device(token: str, device_id: str):
+    """Delete user device"""
+    if token not in sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    auth = UserAuth()
+    if auth.delete_user_device(sessions[token], device_id):
+        return {"success": True}
+    return {"success": False}
+
+
+@app.get("/api/user/groups", tags=["User"])
+async def get_user_groups(token: str):
+    """Get groups for logged in user"""
+    if token not in sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    auth = UserAuth()
+    groups = auth.get_user_groups(sessions[token])
+    return {"groups": groups}
+
+
+@app.post("/api/user/alert-email", tags=["User"])
+async def update_alert_email(token: str, alert_email: str):
+    """Update user's alert email"""
+    if token not in sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    auth = UserAuth()
+    if auth.update_alert_email(sessions[token], alert_email):
+        return {"success": True}
+    return {"success": False}
+
+
+# ==================== Device Endpoints (Legacy - will be replaced) ====================
+
+@app.get("/api/devices", response_model=List[DeviceResponse], tags=["Devices (Legacy)"])
 async def get_devices():
-    """Get all monitored devices with downtime info"""
+    """Get all monitored devices (legacy - will be replaced with user-specific)"""
     try:
         engine = get_engine()
         devices = engine.get_devices()
@@ -261,9 +392,9 @@ async def get_devices():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/devices/{device_id}", response_model=DeviceResponse, tags=["Devices"])
+@app.get("/api/devices/{device_id}", response_model=DeviceResponse, tags=["Devices (Legacy)"])
 async def get_device(device_id: str):
-    """Get a specific device by ID with downtime info"""
+    """Get a specific device by ID (legacy)"""
     try:
         engine = get_engine()
         device = engine.devices.get(device_id)
@@ -277,18 +408,16 @@ async def get_device(device_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/devices", response_model=DeviceResponse, status_code=status.HTTP_201_CREATED, tags=["Devices"])
+@app.post("/api/devices", response_model=DeviceResponse, status_code=status.HTTP_201_CREATED, tags=["Devices (Legacy)"])
 async def create_device(device: DeviceCreate):
-    """Add a new device to monitor"""
+    """Add a new device to monitor (legacy)"""
     try:
         engine = get_engine()
         
-        # Check if device already exists by IP
         for existing in engine.get_devices():
             if existing.ip_address == device.ip:
                 raise HTTPException(status_code=400, detail=f"Device with IP {device.ip} already exists")
         
-        # Create device with defaults
         device_id = device.name.lower().replace(' ', '_')
         new_device = Device(
             device_id=device_id,
@@ -310,16 +439,15 @@ async def create_device(device: DeviceCreate):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.put("/api/devices/{device_id}", response_model=DeviceResponse, tags=["Devices"])
+@app.put("/api/devices/{device_id}", response_model=DeviceResponse, tags=["Devices (Legacy)"])
 async def update_device(device_id: str, updates: DeviceUpdate):
-    """Update a device (name and/or IP)"""
+    """Update a device (legacy)"""
     try:
         engine = get_engine()
         
         if device_id not in engine.devices:
             raise HTTPException(status_code=404, detail=f"Device '{device_id}' not found")
         
-        # Prepare updates
         update_dict = {}
         if updates.name:
             update_dict['name'] = updates.name
@@ -341,9 +469,9 @@ async def update_device(device_id: str, updates: DeviceUpdate):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/api/devices/{device_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Devices"])
+@app.delete("/api/devices/{device_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Devices (Legacy)"])
 async def delete_device(device_id: str):
-    """Remove a device from monitoring"""
+    """Remove a device from monitoring (legacy)"""
     try:
         engine = get_engine()
         
@@ -471,7 +599,6 @@ async def start_monitoring(interval: int = 30):
     _monitoring_active = True
     _monitoring_interval = interval
     
-    # Start monitoring in background thread
     _monitoring_thread = threading.Thread(target=run_monitoring_loop, args=(interval,), daemon=True)
     _monitoring_thread.start()
     
@@ -492,7 +619,6 @@ async def stop_monitoring():
     
     _monitoring_active = False
     
-    # Wait for thread to finish (max 5 seconds)
     timeout = 5
     while _monitoring_thread and _monitoring_thread.is_alive() and timeout > 0:
         time.sleep(0.5)
@@ -513,7 +639,6 @@ async def get_monitoring_status():
     """Get current monitoring service status"""
     global _monitoring_active, _monitoring_interval
     
-    # Get last check time from the most recent log - using _last_check
     last_check = None
     try:
         engine = get_engine()

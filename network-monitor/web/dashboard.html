@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NetPulse - Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="navbar">
+        <h1>🌐 NetPulse</h1>
+        <div class="user-info">
+            <span id="username-display"></span>
+            <span id="email-display"></span>
+            <button class="logout-btn" onclick="logout()">Logout</button>
+        </div>
+    </div>
+    
+    <div class="container">
+        <!-- Control Panel -->
+        <div class="control-panel">
+            <div class="control-group">
+                <label>Interval:</label>
+                <input type="number" id="interval-input" class="interval-input" value="30" min="5" max="300">
+                <button class="btn-start" onclick="startMonitoring()">▶ Start</button>
+                <button class="btn-stop" onclick="stopMonitoring()">⏹ Stop</button>
+            </div>
+            <div>
+                Status: <span id="monitor-status" class="status-badge status-stopped">STOPPED</span>
+            </div>
+        </div>
+        
+        <!-- Alert Email Section -->
+        <div class="alert-section">
+            <input type="email" id="alert-email" class="alert-input" placeholder="Alert email (for notifications)">
+            <button class="btn-save" onclick="saveAlertEmail()">Save Alert Email</button>
+        </div>
+        
+        <!-- Stats Cards -->
+        <div class="stats-grid" id="stats">
+            <div class="stat-card"><h3>Total Devices</h3><div class="stat-number" id="total-devices">0</div></div>
+            <div class="stat-card"><h3>UP</h3><div class="stat-number stat-up" id="up-count">0</div></div>
+            <div class="stat-card"><h3>DEGRADED</h3><div class="stat-number stat-degraded" id="degraded-count">0</div></div>
+            <div class="stat-card"><h3>DOWN</h3><div class="stat-number stat-down" id="down-count">0</div></div>
+        </div>
+        
+        <!-- Device Section -->
+        <div class="device-section">
+            <div class="section-header">
+                <h2>📋 Devices</h2>
+                <div class="filter-group">
+                    <label>Group:</label>
+                    <select id="group-filter" class="filter-select" onchange="filterDevices()">
+                        <option value="all">All Groups</option>
+                    </select>
+                    <button class="refresh-btn" onclick="loadDevices()">🔄 Refresh</button>
+                    <button class="add-btn" onclick="openAddModal()">➕ Add Device</button>
+                </div>
+            </div>
+            <div id="devices-table">
+                <div class="loading">Loading devices...</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Add/Edit Modal -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <h3 id="modal-title">Add Device</h3>
+            <input type="text" id="device-name" placeholder="Device Name">
+            <input type="text" id="device-ip" placeholder="IP Address">
+            <input type="text" id="device-group" placeholder="Group (e.g., MTN, Airtel)">
+            <div class="modal-buttons">
+                <button class="cancel-btn" onclick="closeModal()">Cancel</button>
+                <button class="save-btn" onclick="saveDevice()">Save</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const API_URL = 'http://localhost:8000/api';
+        let token = null;
+        let user = null;
+        let editingDeviceId = null;
+        let currentFilter = 'all';
+        
+        // Check authentication on load
+        function checkAuth() {
+            token = localStorage.getItem('netpulse_token');
+            const userStr = localStorage.getItem('netpulse_user');
+            
+            if (!token || !userStr) {
+                window.location.href = 'login.html';
+                return false;
+            }
+            
+            user = JSON.parse(userStr);
+            document.getElementById('username-display').textContent = user.username;
+            if (user.alert_email) {
+                document.getElementById('alert-email').value = user.alert_email;
+                document.getElementById('email-display').textContent = user.alert_email;
+            }
+            return true;
+        }
+        
+        // Logout
+        async function logout() {
+            try {
+                await fetch(`${API_URL}/auth/logout?token=${token}`, { method: 'POST' });
+            } catch(e) {}
+            localStorage.removeItem('netpulse_token');
+            localStorage.removeItem('netpulse_user');
+            window.location.href = 'login.html';
+        }
+        
+        // Save alert email
+        async function saveAlertEmail() {
+            const alertEmail = document.getElementById('alert-email').value;
+            if (!alertEmail) return;
+            
+            try {
+                const response = await fetch(`${API_URL}/user/alert-email?token=${token}&alert_email=${encodeURIComponent(alertEmail)}`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                if (data.success) {
+                    user.alert_email = alertEmail;
+                    localStorage.setItem('netpulse_user', JSON.stringify(user));
+                    document.getElementById('email-display').textContent = alertEmail;
+                    alert('✅ Alert email saved!');
+                }
+            } catch (error) {
+                alert('Error saving alert email');
+            }
+        }
+        
+        // Start monitoring
+        async function startMonitoring() {
+            const interval = document.getElementById('interval-input').value;
+            try {
+                const response = await fetch(`${API_URL}/monitoring/start?interval=${interval}`, { method: 'POST' });
+                if (response.ok) {
+                    alert('Monitoring started!');
+                    updateMonitoringStatus();
+                }
+            } catch (error) {
+                alert('Error starting monitoring');
+            }
+        }
+        
+        // Stop monitoring
+        async function stopMonitoring() {
+            try {
+                const response = await fetch(`${API_URL}/monitoring/stop`, { method: 'POST' });
+                if (response.ok) {
+                    alert('Monitoring stopped!');
+                    updateMonitoringStatus();
+                }
+            } catch (error) {
+                alert('Error stopping monitoring');
+            }
+        }
+        
+        // Update monitoring status display
+        async function updateMonitoringStatus() {
+            try {
+                const response = await fetch(`${API_URL}/monitoring/status`);
+                const status = await response.json();
+                const statusSpan = document.getElementById('monitor-status');
+                if (status.running) {
+                    statusSpan.textContent = 'RUNNING';
+                    statusSpan.className = 'status-badge status-running';
+                } else {
+                    statusSpan.textContent = 'STOPPED';
+                    statusSpan.className = 'status-badge status-stopped';
+                }
+            } catch (e) {}
+        }
+        
+        // Load devices
+        async function loadDevices() {
+            try {
+                const response = await fetch(`${API_URL}/user/devices?token=${token}`);
+                const devices = await response.json();
+                displayDevices(devices);
+                updateStats(devices);
+                loadGroups(devices);
+            } catch (error) {
+                document.getElementById('devices-table').innerHTML = '<div class="error-msg">Failed to load devices</div>';
+            }
+        }
+        
+        // Update stats
+        function updateStats(devices) {
+            let up = 0, degraded = 0, down = 0;
+            for (const d of devices) {
+                if (d.status === 'UP') up++;
+                else if (d.status === 'DEGRADED') degraded++;
+                else if (d.status === 'DOWN') down++;
+            }
+            document.getElementById('total-devices').textContent = devices.length;
+            document.getElementById('up-count').textContent = up;
+            document.getElementById('degraded-count').textContent = degraded;
+            document.getElementById('down-count').textContent = down;
+        }
+        
+        // Load groups for filter
+        function loadGroups(devices) {
+            const groups = new Set();
+            groups.add('all');
+            for (const d of devices) {
+                groups.add(d.group || 'Default');
+            }
+            const filterSelect = document.getElementById('group-filter');
+            filterSelect.innerHTML = '';
+            for (const g of groups) {
+                const option = document.createElement('option');
+                option.value = g === 'all' ? 'all' : g;
+                option.textContent = g === 'all' ? 'All Groups' : g;
+                filterSelect.appendChild(option);
+            }
+            filterSelect.value = currentFilter;
+        }
+        
+        // Filter devices
+        function filterDevices() {
+            currentFilter = document.getElementById('group-filter').value;
+            loadDevices();
+        }
+        
+        // Display devices
+        function displayDevices(devices) {
+            let filtered = devices;
+            if (currentFilter !== 'all') {
+                filtered = devices.filter(d => (d.group || 'Default') === currentFilter);
+            }
+            
+            if (filtered.length === 0) {
+                document.getElementById('devices-table').innerHTML = '<div class="loading">No devices in this group. Click "Add Device" to add one.</div>';
+                return;
+            }
+            
+            const groupColors = { MTN: '#ff9800', Airtel: '#e91e63', Glo: '#4caf50', '9mobile': '#2196f3', Gateway: '#9c27b0', DNS: '#00bcd4' };
+            
+            let html = `<table><thead><tr><th>Group</th><th>Name</th><th>IP</th><th>Status</th><th>Latency</th><th>Last Check</th><th>Downtime</th><th>Actions</th></tr></thead><tbody>`;
+            
+            for (const d of filtered) {
+                const groupColor = groupColors[d.group] || '#6b7280';
+                const statusClass = `status-${d.status.toLowerCase()}`;
+                const latency = d.latency_ms ? `${d.latency_ms.toFixed(1)}ms` : 'N/A';
+                const lastCheck = d.last_check ? new Date(d.last_check).toLocaleTimeString() : 'Never';
+                const downtime = d.downtime_display || '-';
+                
+                html += `<tr>
+                    <td><span class="group-badge" style="background: ${groupColor}; color: white;">${escapeHtml(d.group || 'Default')}</span></td>
+                    <td><strong>${escapeHtml(d.name)}</strong></td>
+                    <td>${escapeHtml(d.ip)}</td>
+                    <td><span class="status-badge-sm ${statusClass}">${d.status}</span></td>
+                    <td>${latency}</td>
+                    <td>${lastCheck}</td>
+                    <td>${downtime}</td>
+                    <td>
+                        <button class="action-btn edit-btn" onclick="openEditModal('${d.id}', '${escapeHtml(d.name)}', '${escapeHtml(d.ip)}', '${escapeHtml(d.group || 'Default')}')">Edit</button>
+                        <button class="action-btn delete-btn" onclick="deleteDevice('${d.id}')">Delete</button>
+                    </td>
+                </tr>`;
+            }
+            html += `</tbody></table>`;
+            document.getElementById('devices-table').innerHTML = html;
+        }
+        
+        function escapeHtml(str) { 
+            if (!str) return '';
+            return str.replace(/[&<>]/g, function(m) { 
+                const escapes = {'&':'&amp;','<':'&lt;','>':'&gt;'};
+                return escapes[m];
+            }); 
+        }
+        
+        function openAddModal() {
+            editingDeviceId = null;
+            document.getElementById('modal-title').textContent = 'Add Device';
+            document.getElementById('device-name').value = '';
+            document.getElementById('device-ip').value = '';
+            document.getElementById('device-group').value = '';
+            document.getElementById('modal').style.display = 'flex';
+        }
+        
+        function openEditModal(id, name, ip, group) {
+            editingDeviceId = id;
+            document.getElementById('modal-title').textContent = 'Edit Device';
+            document.getElementById('device-name').value = name;
+            document.getElementById('device-ip').value = ip;
+            document.getElementById('device-group').value = group;
+            document.getElementById('modal').style.display = 'flex';
+        }
+        
+        async function saveDevice() {
+            const name = document.getElementById('device-name').value.trim();
+            const ip = document.getElementById('device-ip').value.trim();
+            const group = document.getElementById('device-group').value.trim() || 'Default';
+            if (!name || !ip) { alert('Please enter name and IP'); return; }
+            
+            try {
+                if (editingDeviceId) {
+                    await fetch(`${API_URL}/user/devices/${editingDeviceId}?token=${token}&name=${encodeURIComponent(name)}&ip=${encodeURIComponent(ip)}&group=${encodeURIComponent(group)}`, { method: 'PUT' });
+                    alert('✅ Device updated!');
+                } else {
+                    await fetch(`${API_URL}/user/devices?token=${token}&name=${encodeURIComponent(name)}&ip=${encodeURIComponent(ip)}&group=${encodeURIComponent(group)}`, { method: 'POST' });
+                    alert('✅ Device added!');
+                }
+                closeModal();
+                loadDevices();
+            } catch (error) {
+                alert('Error saving device');
+            }
+        }
+        
+        async function deleteDevice(id) {
+            if (!confirm('Delete this device?')) return;
+            try {
+                await fetch(`${API_URL}/user/devices/${id}?token=${token}`, { method: 'DELETE' });
+                alert('✅ Device deleted!');
+                loadDevices();
+            } catch (error) {
+                alert('Error deleting device');
+            }
+        }
+        
+        function closeModal() {
+            document.getElementById('modal').style.display = 'none';
+            editingDeviceId = null;
+        }
+        
+        // Auto refresh
+        let refreshInterval;
+        function startAutoRefresh() {
+            if (refreshInterval) clearInterval(refreshInterval);
+            refreshInterval = setInterval(() => { loadDevices(); updateMonitoringStatus(); }, 5000);
+        }
+        
+        // Initialize
+        if (checkAuth()) {
+            loadDevices();
+            updateMonitoringStatus();
+            startAutoRefresh();
+        }
+        
+        window.onclick = function(e) { if (e.target === document.getElementById('modal')) closeModal(); };
+    </script>
+</body>
+</html>

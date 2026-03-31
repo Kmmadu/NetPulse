@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NetPulse - Login</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="auth-body">
+    <div class="auth-container">
+        <div class="logo">
+            <h1>🌐 NetPulse</h1>
+            <p>Network Monitoring System</p>
+        </div>
+        
+        <div id="message"></div>
+        
+        <form onsubmit="login(event)">
+            <div class="form-group">
+                <label>Username or Email</label>
+                <input type="text" id="username" required placeholder="Enter your username or email">
+            </div>
+            
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="password" required placeholder="Enter your password">
+            </div>
+            
+            <button type="submit">Login</button>
+        </form>
+        
+        <div class="auth-link">
+            Don't have an account? <a href="register.html">Register here</a>
+        </div>
+    </div>
+    
+    <script>
+        const API_URL = 'http://localhost:8000/api';
+        
+        async function login(event) {
+            event.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            console.log('Attempting login with:', username);
+            
+            try {
+                const response = await fetch(`${API_URL}/auth/login`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                console.log('Response status:', response.status);
+                const data = await response.json();
+                console.log('Response data:', data);
+                
+                if (data.success) {
+                    // Save token and user info
+                    localStorage.setItem('netpulse_token', data.token);
+                    localStorage.setItem('netpulse_user', JSON.stringify({
+                        id: data.user_id,
+                        username: data.username,
+                        alert_email: data.alert_email
+                    }));
+                    
+                    console.log('Login successful, redirecting to dashboard...');
+                    window.location.href = 'dashboard.html';
+                } else {
+                    showMessage(data.error || 'Login failed', 'error');
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                showMessage('Error connecting to server: ' + error.message, 'error');
+            }
+        }
+        
+        function showMessage(msg, type) {
+            const div = document.getElementById('message');
+            div.className = type;
+            div.textContent = msg;
+            setTimeout(() => {
+                div.textContent = '';
+                div.className = '';
+            }, 3000);
+        }
+    </script>
+</body>
+</html>

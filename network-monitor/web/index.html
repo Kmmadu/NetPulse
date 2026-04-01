@@ -6,42 +6,342 @@
     <title>NetPulse - Network Monitoring System</title>
     <link rel="stylesheet" href="styles.css">
 </head>
-<body>
-    <div class="landing-container">
-        <h1>🌐 NetPulse</h1>
-        <p>Simple, Powerful Network Monitoring</p>
-        
-        <div class="btn-group">
-            <a href="login.html" class="btn-primary">Login</a>
-            <a href="register.html" class="btn-secondary">Register</a>
+<body class="lp-body">
+    <header class="lp-header">
+        <nav class="lp-nav lp-container">
+            <a class="lp-logo" href="index.html" aria-label="NetPulse Home">
+                <span class="lp-logo-dot" aria-hidden="true"></span>
+                <span class="lp-logo-text">NetPulse</span>
+            </a>
+
+            <div class="lp-nav-links" aria-label="Primary">
+                <a href="dashboard.html">Dashboard</a>
+                <a href="#infrastructure">Infrastructure</a>
+                <a href="#security">Security</a>
+                <a href="#reports">Reports</a>
+                <a href="#pricing">Pricing</a>
+            </div>
+
+            <div class="lp-nav-cta">
+                <a class="lp-nav-link" href="login.html">Sign in</a>
+                <a class="lp-btn lp-btn-primary" href="register.html">Get Started</a>
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        <section class="lp-hero">
+            <div class="lp-container">
+                <div class="lp-hero-grid">
+                    <div class="lp-hero-copy">
+                        <div class="lp-badge">Realtime + Reliable</div>
+                        <h1>
+                            Simple, Powerful
+                            <span class="lp-accent">Network</span>
+                            Monitoring
+                        </h1>
+                        <p class="lp-lead">
+                            Gain absolute visibility into your infrastructure. Detect anomalies before they become outages with our
+                            precision uptime monitoring engine.
+                        </p>
+
+                        <div class="lp-hero-actions">
+                            <a class="lp-btn lp-btn-primary lp-btn-lg" href="register.html">Get Started Free</a>
+                            <a class="lp-btn lp-btn-secondary lp-btn-lg" href="login.html">View Demo</a>
+                        </div>
+
+                        <div class="lp-proof">
+                            <div class="lp-avatars" aria-hidden="true">
+                                <span class="lp-avatar">AJ</span>
+                                <span class="lp-avatar">MS</span>
+                                <span class="lp-avatar">TK</span>
+                            </div>
+                            <div class="lp-proof-text">
+                                Trusted by 2,000+ DevOps Teams
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="lp-hero-media">
+                        <div class="lp-media-frame" role="img" aria-label="NetPulse dashboard preview">
+                            <div class="lp-media-glow" aria-hidden="true"></div>
+                            <div class="lp-media-card">
+                                <div class="lp-media-top">
+                                    <div class="lp-media-title">NETPULSE</div>
+                                    <div class="lp-media-subtitle">Live View</div>
+                                </div>
+                                <svg class="lp-media-chart" viewBox="0 0 600 280" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                                    <defs>
+                                        <linearGradient id="npLine" x1="0" y1="0" x2="1" y2="0">
+                                            <stop offset="0" stop-color="#4f8cff" />
+                                            <stop offset="1" stop-color="#56d7ff" />
+                                        </linearGradient>
+                                        <linearGradient id="npFill" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0" stop-color="#56d7ff" stop-opacity="0.35" />
+                                            <stop offset="1" stop-color="#56d7ff" stop-opacity="0" />
+                                        </linearGradient>
+                                    </defs>
+                                    <g opacity="0.35" stroke="#b5d7ff" stroke-width="1">
+                                        <line x1="40" y1="40" x2="560" y2="40" />
+                                        <line x1="40" y1="90" x2="560" y2="90" />
+                                        <line x1="40" y1="140" x2="560" y2="140" />
+                                        <line x1="40" y1="190" x2="560" y2="190" />
+                                        <line x1="40" y1="240" x2="560" y2="240" />
+                                    </g>
+                                    <path d="M40 210 C 90 190, 120 210, 160 170 C 205 130, 235 185, 280 150 C 320 120, 350 170, 390 140 C 430 110, 470 120, 520 80 C 535 68, 548 62, 560 55 L 560 250 L 40 250 Z" fill="url(#npFill)" />
+                                    <path d="M40 210 C 90 190, 120 210, 160 170 C 205 130, 235 185, 280 150 C 320 120, 350 170, 390 140 C 430 110, 470 120, 520 80 C 535 68, 548 62, 560 55" fill="none" stroke="url(#npLine)" stroke-width="4" stroke-linecap="round" />
+                                    <g fill="#56d7ff">
+                                        <circle cx="160" cy="170" r="5" />
+                                        <circle cx="280" cy="150" r="5" />
+                                        <circle cx="390" cy="140" r="5" />
+                                        <circle cx="520" cy="80" r="5" />
+                                    </g>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="infrastructure" class="lp-section">
+            <div class="lp-container">
+                <div class="lp-section-head">
+                    <h2>Built for High-Precision Operations</h2>
+                    <p>Everything you need to maintain SLA/SLO uptime, condensed into a single, intuitive interface.</p>
+                    <div class="lp-pills" aria-label="Plan selector">
+                        <span class="lp-pill lp-pill-active">Enterprise</span>
+                        <span class="lp-pill">Personal</span>
+                    </div>
+                </div>
+
+                <div class="lp-feature-grid">
+                    <article class="lp-card lp-span-7 lp-tall">
+                        <div class="lp-card-head">
+                            <h3>Real-time Monitoring</h3>
+                            <p>Instant device status and health, with high-frequency checks and customizable thresholds.</p>
+                        </div>
+                        <div class="lp-card-body">
+                            <svg class="lp-mini-chart" viewBox="0 0 520 240" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                                <defs>
+                                    <linearGradient id="npMiniLine" x1="0" y1="0" x2="1" y2="0">
+                                        <stop offset="0" stop-color="#7c3aed" />
+                                        <stop offset="1" stop-color="#22c55e" />
+                                    </linearGradient>
+                                    <linearGradient id="npMiniFill" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0" stop-color="#7c3aed" stop-opacity="0.25" />
+                                        <stop offset="1" stop-color="#7c3aed" stop-opacity="0" />
+                                    </linearGradient>
+                                </defs>
+                                <g opacity="0.25" stroke="#9ca3af" stroke-width="1">
+                                    <line x1="20" y1="30" x2="500" y2="30" />
+                                    <line x1="20" y1="80" x2="500" y2="80" />
+                                    <line x1="20" y1="130" x2="500" y2="130" />
+                                    <line x1="20" y1="180" x2="500" y2="180" />
+                                    <line x1="20" y1="230" x2="500" y2="230" />
+                                </g>
+                                <path d="M20 190 C 60 160, 110 200, 150 150 C 190 100, 230 140, 270 95 C 310 50, 350 95, 390 70 C 430 50, 470 70, 500 45 L 500 230 L 20 230 Z" fill="url(#npMiniFill)" />
+                                <path d="M20 190 C 60 160, 110 200, 150 150 C 190 100, 230 140, 270 95 C 310 50, 350 95, 390 70 C 430 50, 470 70, 500 45" fill="none" stroke="url(#npMiniLine)" stroke-width="4" stroke-linecap="round" />
+                            </svg>
+                        </div>
+                    </article>
+
+                    <article class="lp-card lp-span-5">
+                        <div class="lp-card-head">
+                            <h3>Email Alerts</h3>
+                            <p>Instant notifications with clear context. Tune thresholds to avoid alert fatigue.</p>
+                        </div>
+                        <div class="lp-card-body">
+                            <div class="lp-kpi">
+                                <div class="lp-kpi-label">Delivery</div>
+                                <div class="lp-kpi-value">99.9%</div>
+                            </div>
+                            <div class="lp-kpi">
+                                <div class="lp-kpi-label">Escalation</div>
+                                <div class="lp-kpi-value">On-call</div>
+                            </div>
+                        </div>
+                    </article>
+
+                    <article class="lp-card lp-span-4 lp-card-soft">
+                        <div class="lp-card-head">
+                            <h3>Downtime Tracking</h3>
+                            <p>Track outages with precise timing, even across restarts and deployments.</p>
+                        </div>
+                        <div class="lp-card-body">
+                            <div class="lp-stat">
+                                <div class="lp-stat-big">99.99%</div>
+                                <div class="lp-stat-sub">monthly uptime</div>
+                            </div>
+                        </div>
+                    </article>
+
+                    <article class="lp-card lp-span-4 lp-card-soft">
+                        <div class="lp-card-head">
+                            <h3>Device Groups</h3>
+                            <p>Organize devices by provider, location, or function to keep signal high.</p>
+                        </div>
+                        <div class="lp-card-body">
+                            <div class="lp-tags" aria-label="Example tags">
+                                <span class="lp-tag">ISP-A</span>
+                                <span class="lp-tag">Core</span>
+                                <span class="lp-tag">Edge</span>
+                            </div>
+                        </div>
+                    </article>
+
+                    <article class="lp-card lp-span-4 lp-card-warn">
+                        <div class="lp-card-head">
+                            <h3>DEGRADED Detection</h3>
+                            <p>Detect slow responses and packet loss before full outages impact customers.</p>
+                        </div>
+                        <div class="lp-card-body">
+                            <div class="lp-alert-chip">At risk</div>
+                        </div>
+                    </article>
+
+                    <article class="lp-card lp-span-12 lp-card-dark" id="security">
+                        <div class="lp-card-head">
+                            <h3>Easy Setup</h3>
+                            <p>Add devices with just a name and IP address. NetPulse starts monitoring immediately.</p>
+                        </div>
+                        <div class="lp-card-body lp-card-dark-body">
+                            <div class="lp-code">
+                                <div class="lp-code-line">
+                                    <span class="lp-code-dot"></span>
+                                    <span class="lp-code-dot"></span>
+                                    <span class="lp-code-dot"></span>
+                                </div>
+                                <div class="lp-code-text">netpulse add --name "edge-router" --ip 10.0.0.1</div>
+                                <div class="lp-code-text">netpulse watch --interval 10</div>
+                            </div>
+                            <a class="lp-btn lp-btn-invert" href="register.html">Start Monitoring Now</a>
+                        </div>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <section class="lp-section lp-section-muted" id="reports">
+            <div class="lp-container">
+                <div class="lp-split">
+                    <div class="lp-nodes">
+                        <div class="lp-nodes-head">
+                            <div class="lp-nodes-title">Active Nodes</div>
+                            <div class="lp-nodes-chip">LIVE</div>
+                        </div>
+                        <div class="lp-node-row">
+                            <div class="lp-node-name">US-CENTRAL Primary</div>
+                            <div class="lp-node-pill lp-node-up">UP</div>
+                        </div>
+                        <div class="lp-node-row">
+                            <div class="lp-node-name">US-WEST-2 Primary</div>
+                            <div class="lp-node-pill lp-node-up">UP</div>
+                        </div>
+                        <div class="lp-node-row">
+                            <div class="lp-node-name">ASIA-SOUTH-1 Relay</div>
+                            <div class="lp-node-pill lp-node-warn">DEG</div>
+                        </div>
+                    </div>
+
+                    <div class="lp-split-copy">
+                        <h2>Total Observability, No Configuration Fatigue</h2>
+                        <p>
+                            NetPulse adapts to complex infrastructure monitoring. Whether you're tracking 10 servers or 10,000, our
+                            system scales with you automatically.
+                        </p>
+                        <ul class="lp-checklist">
+                            <li>Automatic topology mapping</li>
+                            <li>Rich packet health &amp; baselines</li>
+                            <li>Centralized anomaly detection</li>
+                            <li>Fast incident notifications</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="lp-section lp-pricing" id="pricing">
+            <div class="lp-container">
+                <div class="lp-section-head lp-center">
+                    <h2>Pricing that fits your network</h2>
+                    <p>Start free, upgrade when you need higher scale and advanced alerting.</p>
+                </div>
+                <div class="lp-pricing-grid">
+                    <article class="lp-price-card">
+                        <div class="lp-price-top">
+                            <h3>Starter</h3>
+                            <div class="lp-price">$0</div>
+                            <div class="lp-price-sub">For small labs &amp; projects</div>
+                        </div>
+                        <ul class="lp-price-list">
+                            <li>Up to 10 devices</li>
+                            <li>Basic alerts</li>
+                            <li>Dashboard access</li>
+                        </ul>
+                        <a class="lp-btn lp-btn-secondary lp-btn-block" href="register.html">Get Started</a>
+                    </article>
+                    <article class="lp-price-card lp-price-featured">
+                        <div class="lp-price-top">
+                            <div class="lp-badge lp-badge-solid">Most Popular</div>
+                            <h3>Team</h3>
+                            <div class="lp-price">$19</div>
+                            <div class="lp-price-sub">Per month</div>
+                        </div>
+                        <ul class="lp-price-list">
+                            <li>Up to 250 devices</li>
+                            <li>Advanced alert routing</li>
+                            <li>Degraded detection</li>
+                        </ul>
+                        <a class="lp-btn lp-btn-primary lp-btn-block" href="register.html">Start Free Trial</a>
+                    </article>
+                    <article class="lp-price-card">
+                        <div class="lp-price-top">
+                            <h3>Enterprise</h3>
+                            <div class="lp-price">Custom</div>
+                            <div class="lp-price-sub">For large networks</div>
+                        </div>
+                        <ul class="lp-price-list">
+                            <li>Unlimited devices</li>
+                            <li>Dedicated support</li>
+                            <li>Custom integrations</li>
+                        </ul>
+                        <a class="lp-btn lp-btn-secondary lp-btn-block" href="login.html">Contact Sales</a>
+                    </article>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="lp-footer">
+        <div class="lp-container lp-footer-grid">
+            <div class="lp-footer-brand">
+                <div class="lp-footer-logo">
+                    <span class="lp-logo-dot" aria-hidden="true"></span>
+                    <span class="lp-logo-text">NetPulse</span>
+                </div>
+                <p class="lp-footer-note">The modern network monitor for uptime, anomalies, and performance insights.</p>
+                <p class="lp-footer-note">© 2026 NetPulse Technologies. All rights reserved.</p>
+            </div>
+            <div class="lp-footer-col">
+                <div class="lp-footer-title">Platform</div>
+                <a href="#infrastructure">Infrastructure</a>
+                <a href="#security">Security</a>
+                <a href="#reports">Reports</a>
+                <a href="#pricing">Pricing</a>
+            </div>
+            <div class="lp-footer-col">
+                <div class="lp-footer-title">Resources</div>
+                <a href="dashboard.html">Dashboard</a>
+                <a href="login.html">Sign in</a>
+                <a href="register.html">Create account</a>
+            </div>
+            <div class="lp-footer-col">
+                <div class="lp-footer-title">Legal</div>
+                <span class="lp-footer-text">Privacy Policy</span>
+                <span class="lp-footer-text">Terms of Service</span>
+            </div>
         </div>
-        
-        <div class="features">
-            <div class="feature">
-                <h3>📡 Real-time Monitoring</h3>
-                <p>Monitor your network devices with instant status updates</p>
-            </div>
-            <div class="feature">
-                <h3>📧 Email Alerts</h3>
-                <p>Get notified when devices go down or recover</p>
-            </div>
-            <div class="feature">
-                <h3>📊 Downtime Tracking</h3>
-                <p>See how long devices have been down with precise timing</p>
-            </div>
-            <div class="feature">
-                <h3>🏷️ Device Groups</h3>
-                <p>Organize devices by provider, location, or function</p>
-            </div>
-            <div class="feature">
-                <h3>🟢 DEGRADED Detection</h3>
-                <p>Detect when devices are slow or experiencing packet loss</p>
-            </div>
-            <div class="feature">
-                <h3>🚀 Easy Setup</h3>
-                <p>Add devices with just a name and IP address</p>
-            </div>
-        </div>
-    </div>
+    </footer>
 </body>
 </html>

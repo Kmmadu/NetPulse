@@ -181,12 +181,15 @@
         async function loadDevices() {
             try {
                 const response = await fetch(`${API_URL}/user/devices?token=${token}`);
-                const devices = await response.json();
-                displayDevices(devices);
-                updateStats(devices);
-                loadGroups(devices);
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || data.detail || 'Failed to load devices');
+                }
+                displayDevices(data);
+                updateStats(data);
+                loadGroups(data);
             } catch (error) {
-                document.getElementById('devices-table').innerHTML = '<div class="error-msg">Failed to load devices</div>';
+                document.getElementById('devices-table').innerHTML = `<div class="error-msg">Failed to load devices: ${escapeHtml(error.message)}</div>`;
             }
         }
         
@@ -209,7 +212,7 @@
             const groups = new Set();
             groups.add('all');
             for (const d of devices) {
-                groups.add(d.group || 'Default');
+                groups.add(d.device_group || 'Default');
             }
             const filterSelect = document.getElementById('group-filter');
             filterSelect.innerHTML = '';
@@ -232,7 +235,7 @@
         function displayDevices(devices) {
             let filtered = devices;
             if (currentFilter !== 'all') {
-                filtered = devices.filter(d => (d.group || 'Default') === currentFilter);
+                filtered = devices.filter(d => (d.device_group || 'Default') === currentFilter);
             }
             
             if (filtered.length === 0) {
@@ -245,23 +248,26 @@
             let html = `<table><thead><tr><th>Group</th><th>Name</th><th>IP</th><th>Status</th><th>Latency</th><th>Last Check</th><th>Downtime</th><th>Actions</th></tr></thead><tbody>`;
             
             for (const d of filtered) {
-                const groupColor = groupColors[d.group] || '#6b7280';
-                const statusClass = `status-${d.status.toLowerCase()}`;
+                const group = d.device_group || 'Default';
+                const ip = d.ip_address || d.ip || 'N/A';
+                const groupColor = groupColors[group] || '#6b7280';
+                const statusText = d.status || 'UNKNOWN';
+                const statusClass = `status-${statusText.toLowerCase()}`;
                 const latency = d.latency_ms ? `${d.latency_ms.toFixed(1)}ms` : 'N/A';
                 const lastCheck = d.last_check ? new Date(d.last_check).toLocaleTimeString() : 'Never';
                 const downtime = d.downtime_display || '-';
                 
                 html += `<tr>
-                    <td><span class="group-badge" style="background: ${groupColor}; color: white;">${escapeHtml(d.group || 'Default')}</span></td>
+                    <td><span class="group-badge" style="background: ${groupColor}; color: white;">${escapeHtml(group)}</span></td>
                     <td><strong>${escapeHtml(d.name)}</strong></td>
-                    <td>${escapeHtml(d.ip)}</td>
-                    <td><span class="status-badge-sm ${statusClass}">${d.status}</span></td>
+                    <td>${escapeHtml(ip)}</td>
+                    <td><span class="status-badge-sm ${statusClass}">${escapeHtml(statusText)}</span></td>
                     <td>${latency}</td>
                     <td>${lastCheck}</td>
                     <td>${downtime}</td>
                     <td>
-                        <button class="action-btn edit-btn" onclick="openEditModal('${d.id}', '${escapeHtml(d.name)}', '${escapeHtml(d.ip)}', '${escapeHtml(d.group || 'Default')}')">Edit</button>
-                        <button class="action-btn delete-btn" onclick="deleteDevice('${d.id}')">Delete</button>
+                        <button class="action-btn edit-btn" onclick="openEditModal('${d.device_id}', '${escapeHtml(d.name)}', '${escapeHtml(ip)}', '${escapeHtml(group)}')">Edit</button>
+                        <button class="action-btn delete-btn" onclick="deleteDevice('${d.device_id}')">Delete</button>
                     </td>
                 </tr>`;
             }

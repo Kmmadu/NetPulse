@@ -7,62 +7,116 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="navbar">
-        <h1>🌐 NetPulse</h1>
-        <div class="user-info">
-            <span id="username-display"></span>
-            <span id="email-display"></span>
-            <button class="logout-btn" onclick="logout()">Logout</button>
-        </div>
-    </div>
-    
-    <div class="container">
-        <!-- Control Panel -->
-        <div class="control-panel">
-            <div class="control-group">
-                <label>Interval:</label>
-                <input type="number" id="interval-input" class="interval-input" value="30" min="5" max="300">
-                <button class="btn-start" onclick="startMonitoring()">▶ Start</button>
-                <button class="btn-stop" onclick="stopMonitoring()">⏹ Stop</button>
+    <header class="navbar">
+        <div class="navbar-left">
+            <div class="brand">
+                <span class="brand-dot" aria-hidden="true"></span>
+                <span class="brand-name">NetPulse</span>
             </div>
-            <div>
-                Status: <span id="monitor-status" class="status-badge status-stopped">STOPPED</span>
+            <nav class="nav-links" aria-label="Dashboard navigation">
+                <a href="dashboard.html" class="active">Dashboard</a>
+                <a href="#topology">Topology</a>
+                <a href="#alerts">Alerts</a>
+                <a href="#settings">Settings</a>
+            </nav>
+        </div>
+
+        <div class="navbar-actions">
+            <div class="user-summary">
+                <!-- <span id="username-display"></span> -->
+                <!-- <span id="email-display"></span> -->
+                <button class="logout-btn" onclick="logout()">Logout</button>
             </div>
         </div>
-        
-        <!-- Alert Email Section -->
-        <div class="alert-section">
-            <input type="email" id="alert-email" class="alert-input" placeholder="Alert email (for notifications)">
-            <button class="btn-save" onclick="saveAlertEmail()">Save Alert Email</button>
-        </div>
-        
-        <!-- Stats Cards -->
-        <div class="stats-grid" id="stats">
-            <div class="stat-card"><h3>Total Devices</h3><div class="stat-number" id="total-devices">0</div></div>
-            <div class="stat-card"><h3>UP</h3><div class="stat-number stat-up" id="up-count">0</div></div>
-            <div class="stat-card"><h3>DEGRADED</h3><div class="stat-number stat-degraded" id="degraded-count">0</div></div>
-            <div class="stat-card"><h3>DOWN</h3><div class="stat-number stat-down" id="down-count">0</div></div>
-        </div>
-        
-        <!-- Device Section -->
-        <div class="device-section">
+    </header>
+
+    <main class="dashboard-main">
+        <section class="dashboard-hero">
+            <div class="hero-copy">
+                <div class="dashboard-badge">SYSTEM OVERVIEW</div>
+                <h1>Network Health Dashboard</h1>
+            </div>
+        </section>
+
+        <section class="overview-grid" id="stats">
+            <article class="dashboard-card">
+                <div class="card-title">Total Devices</div>
+                <div class="card-value" id="total-devices">0</div>
+                <div class="card-note">Live</div>
+            </article>
+            <article class="dashboard-card">
+                <div class="card-title">UP</div>
+                <div class="card-value card-good" id="up-count">0</div>
+                <div class="card-note">0%</div>
+            </article>
+            <article class="dashboard-card">
+                <div class="card-title">DEGRADED</div>
+                <div class="card-value card-warn" id="degraded-count">0</div>
+                <div class="card-note">0%</div>
+            </article>
+            <article class="dashboard-card">
+                <div class="card-title">DOWN</div>
+                <div class="card-value card-bad" id="down-count">0</div>
+                <div class="card-note">0%</div>
+            </article>
+        </section>
+
+        <section class="control-grid">
+            <article class="info-card control-card">
+                <div class="info-card-header">
+                    <div>
+                        <h2>Control Center</h2>
+                        <p>Manage monitoring status and interval settings.</p>
+                    </div>
+                    <div class="status-pill status-active">Active</div>
+                </div>
+                <div class="control-body">
+                    <div class="control-item">
+                        <label for="interval-input">CHECK INTERVAL</label>
+                        <select id="interval-input" class="select-input">
+                            <option value="5">5 Minutes</option>
+                            <option value="10">10 Minutes</option>
+                            <option value="15">15 Minutes</option>
+                            <option value="30">30 Minutes</option>
+                        </select>
+                    </div>
+                    <div class="control-actions">
+                        <button class="btn-start" onclick="startMonitoring()">Start</button>
+                        <button class="btn-stop" onclick="stopMonitoring()">Stop</button>
+                    </div>
+                </div>
+            </article>
+
+            <article class="info-card alert-card" id="alerts">
+                <div>
+                    <h2>Alert Notifications</h2>
+                    <p>Save the email address that will receive alert notifications.</p>
+                </div>
+                <div class="alert-form">
+                    <input type="email" id="alert-email" class="alert-input" placeholder="admin@enterprise.com">
+                    <button class="btn-save" onclick="saveAlertEmail()">Save Alert Email</button>
+                </div>
+            </article>
+        </section>
+
+        <section class="device-section">
             <div class="section-header">
-                <h2>📋 Devices</h2>
-                <div class="filter-group">
-                    <label>Group:</label>
-                    <select id="group-filter" class="filter-select" onchange="filterDevices()">
-                        <option value="all">All Groups</option>
-                    </select>
-                    <button class="refresh-btn" onclick="loadDevices()">🔄 Refresh</button>
-                    <button class="add-btn" onclick="openAddModal()">➕ Add Device</button>
+                <div>
+                    <h2>Devices Management</h2>
+                    <p>Showing <span id="device-count">0</span> devices</p>
+                </div>
+                <div class="search-group">
+                    <input type="text" id="device-search" class="search-input" placeholder="Search devices..." oninput="filterDevices()">
+                    <button class="refresh-btn" onclick="loadDevices()">Refresh</button>
+                    <button class="add-btn" onclick="openAddModal()">Add Device</button>
                 </div>
             </div>
             <div id="devices-table">
                 <div class="loading">Loading devices...</div>
             </div>
-        </div>
-    </div>
-    
+        </section>
+    </main>
+
     <!-- Add/Edit Modal -->
     <div id="modal" class="modal">
         <div class="modal-content">
@@ -82,7 +136,6 @@
         let token = null;
         let user = null;
         let editingDeviceId = null;
-        let currentFilter = 'all';
         
         // Check authentication on load
         function checkAuth() {
@@ -187,7 +240,6 @@
                 }
                 displayDevices(data);
                 updateStats(data);
-                loadGroups(data);
             } catch (error) {
                 document.getElementById('devices-table').innerHTML = `<div class="error-msg">Failed to load devices: ${escapeHtml(error.message)}</div>`;
             }
@@ -207,36 +259,24 @@
             document.getElementById('down-count').textContent = down;
         }
         
-        // Load groups for filter
-        function loadGroups(devices) {
-            const groups = new Set();
-            groups.add('all');
-            for (const d of devices) {
-                groups.add(d.device_group || 'Default');
-            }
-            const filterSelect = document.getElementById('group-filter');
-            filterSelect.innerHTML = '';
-            for (const g of groups) {
-                const option = document.createElement('option');
-                option.value = g === 'all' ? 'all' : g;
-                option.textContent = g === 'all' ? 'All Groups' : g;
-                filterSelect.appendChild(option);
-            }
-            filterSelect.value = currentFilter;
-        }
-        
-        // Filter devices
+        // Filter devices by search query
         function filterDevices() {
-            currentFilter = document.getElementById('group-filter').value;
             loadDevices();
         }
         
         // Display devices
         function displayDevices(devices) {
+            const query = document.getElementById('device-search')?.value.trim().toLowerCase();
             let filtered = devices;
-            if (currentFilter !== 'all') {
-                filtered = devices.filter(d => (d.device_group || 'Default') === currentFilter);
+            if (query) {
+                filtered = devices.filter(d => {
+                    const name = (d.name || d.device_name || '').toString().toLowerCase();
+                    const ip = (d.ip_address || d.ip || '').toString().toLowerCase();
+                    const group = (d.device_group || 'Default').toString().toLowerCase();
+                    return name.includes(query) || ip.includes(query) || group.includes(query);
+                });
             }
+            document.getElementById('device-count').textContent = filtered.length;
             
             if (filtered.length === 0) {
                 document.getElementById('devices-table').innerHTML = '<div class="loading">No devices in this group. Click "Add Device" to add one.</div>';

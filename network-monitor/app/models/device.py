@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Device Model - Simple with DEGRADED detection
+Device Model - Advanced with Quality Analyzer Integration
 """
 
 from datetime import datetime
@@ -8,43 +8,59 @@ from typing import Dict, Optional, List
 from enum import Enum
 import statistics
 
+from app.services.quality_analyzer import (
+    LinkQualityAnalyzer,
+    QualityMetrics,
+    QualityThresholds
+)
+from app.services.suboptimal_detector import detect_suboptimal_link
+
 
 class DeviceStatus(Enum):
     UNKNOWN = "UNKNOWN"
     UP = "UP"
-    DEGRADED = "DEGRADED"  # Suboptimal but reachable
+    DEGRADED = "DEGRADED"
     DOWN = "DOWN"
 
 
 class Device:
-    """Device with simple degraded detection"""
+    """Device with advanced quality analysis and degradation detection"""
     
     def __init__(self, device_id: str, name: str, ip_address: str, 
                  retry_count: int = 2, timeout: int = 2,
-                 max_latency_ms: float = 200.0,    # Above this = degraded
-                 packet_loss_threshold: float = 10.0,  # Above this % = degraded
-                 sample_window: int = 5):         # How many samples to track
+                 max_latency_ms: float = 200.0,
+                 packet_loss_threshold: float = 10.0,
+                 sample_window: int = 5):
         self.device_id = device_id
         self.name = name
         self.ip_address = ip_address
         self.retry_count = max(1, retry_count)
         self.timeout = timeout
         
-        # Degraded thresholds
+        # Legacy thresholds (kept for backward compatibility)
         self.max_latency_ms = max_latency_ms
         self.packet_loss_threshold = packet_loss_threshold
+        
+        # Quality analyzer
+        thresholds = QualityThresholds(
+            latency_degraded=max_latency_ms,
+            packet_loss_degraded=packet_loss_threshold
+        )
+        self.quality_analyzer = LinkQualityAnalyzer(thresholds=thresholds)
         
         # State
         self._status = DeviceStatus.UNKNOWN
         self._fail_count = 0
         self._last_check = None
         self._last_latency = None
-        self._down_since = None
-        self._degraded_since = None  # Track when degraded started
+        self._down_since = None  # When the current DOWN period started
+        self._degraded_since = None
+        self._last_quality = None
+        self._status_history = []  # Track status changes for stability
         
         # Rolling window for quality metrics
         self._latency_samples: List[float] = []
-        self._success_samples: List[bool] = []  # True = success, False = failure
+        self._success_samples: List[bool] = []
         self._sample_window = sample_window
     
     @property
@@ -65,6 +81,7 @@ class Device:
     
     @property
     def downtime_seconds(self) -> Optional[float]:
+        """Calculate continuous downtime duration"""
         if self._status == DeviceStatus.DOWN and self._down_since:
             return (datetime.now() - self._down_since).total_seconds()
         return None
@@ -75,14 +92,61 @@ class Device:
             return (datetime.now() - self._degraded_since).total_seconds()
         return None
     
+    @property
+    def quality_score(self) -> Optional[int]:
+        """Get current quality score - 0 for DOWN devices"""
+        if self._status == DeviceStatus.DOWN:
+            return 0
+        if self._last_quality and self._last_quality.get('quality_score'):
+            return self._last_quality.get('quality_score')
+        return None
+    
+    @property
+    def quality_level(self) -> Optional[str]:
+        """Get current quality level"""
+        if self._status == DeviceStatus.DOWN:
+            return "Down"
+        if self._last_quality:
+            return self._last_quality.get('quality_level')
+        return None
+    
+    def is_suboptimal(self) -> Dict:
+        """Check if the link is suboptimal"""
+        return detect_suboptimal_link(self)
+    
+    def get_suboptimal_report(self) -> Dict:
+        """Get detailed suboptimal report"""
+        if self._status == DeviceStatus.DOWN:
+            return {
+                'is_suboptimal': False,
+                'severity': 'none',
+                'reasons': ['Device is DOWN'],
+                'quality_impact': 0,
+                'trend': 'stable'
+            }
+        
+        if self._status == DeviceStatus.UP:
+            # Check if UP but suboptimal
+            return self.is_suboptimal()
+        
+        if self._status == DeviceStatus.DEGRADED:
+            # Already degraded, get detailed analysis
+            return self.is_suboptimal()
+        
+        return {
+            'is_suboptimal': False,
+            'severity': 'none',
+            'reasons': [],
+            'quality_impact': 100,
+            'trend': 'stable'
+        }
+    
     def _add_sample(self, is_reachable: bool, latency: Optional[float]):
         """Add a sample to rolling window"""
-        # Track success/failure
         self._success_samples.append(is_reachable)
         if len(self._success_samples) > self._sample_window:
             self._success_samples.pop(0)
         
-        # Track latency (only for successful pings)
         if is_reachable and latency:
             self._latency_samples.append(latency)
             if len(self._latency_samples) > self._sample_window:
@@ -101,29 +165,14 @@ class Device:
             return None
         return sum(self._latency_samples) / len(self._latency_samples)
     
-    def _is_degraded(self) -> bool:
-        """
-        Determine if current performance is degraded.
-        Returns True if:
-        - Packet loss > threshold, OR
-        - Average latency > threshold
-        """
-        # Need enough samples for reliable detection
-        if len(self._success_samples) < 3:
-            return False
-        
-        packet_loss = self._calculate_packet_loss()
-        if packet_loss > self.packet_loss_threshold:
-            return True
-        
-        avg_latency = self._calculate_avg_latency()
-        if avg_latency and avg_latency > self.max_latency_ms:
-            return True
-        
-        return False
+    def _calculate_jitter(self) -> Optional[float]:
+        """Calculate jitter from latency samples"""
+        if len(self._latency_samples) < 2:
+            return None
+        return statistics.stdev(self._latency_samples)
     
     def process_check(self, is_reachable: bool, latency: Optional[float]) -> Dict:
-        """Process a ping result with degraded detection"""
+        """Process a ping result with quality analysis"""
         old_status = self._status
         self._last_check = datetime.now()
         self._last_latency = latency if is_reachable else None
@@ -137,39 +186,65 @@ class Device:
         else:
             self._fail_count += 1
         
-        # Determine new status
-        # 1. Check if DOWN (unreachable)
-        if not is_reachable and self._fail_count >= self.retry_count:
-            new_status = DeviceStatus.DOWN
-        
-        # 2. Check if DEGRADED (reachable but poor performance)
-        elif is_reachable and self._is_degraded():
-            new_status = DeviceStatus.DEGRADED
-        
-        # 3. Normal UP
-        elif is_reachable:
-            new_status = DeviceStatus.UP
-        
-        # 4. Not enough failures yet, maintain current status
-        else:
-            new_status = self._status
-        
-        # Handle transition
-        changed = False
-        if new_status != self._status:
-            changed = True
-            self._status = new_status
+        # Prepare metrics for quality analyzer (only if reachable)
+        quality = None
+        if is_reachable:
+            metrics = QualityMetrics(
+                avg_latency_ms=self._calculate_avg_latency(),
+                jitter_ms=self._calculate_jitter(),
+                packet_loss_percent=self._calculate_packet_loss(),
+                sample_count=len(self._success_samples),
+                success_count=sum(1 for s in self._success_samples if s),
+                failure_count=sum(1 for s in self._success_samples if not s),
+                consecutive_failures=self._fail_count,
+                state_changes=0,
+                timestamp=self._last_check
+            )
             
-            # Track start times for DOWN and DEGRADED
-            if new_status == DeviceStatus.DOWN:
+            # Analyze quality only for reachable devices
+            quality = self.quality_analyzer.analyze(metrics, old_status.value if old_status else None)
+            self._last_quality = quality
+        
+        # Determine new status based on connectivity
+        if not is_reachable and self._fail_count >= self.retry_count:
+            proposed_status = DeviceStatus.DOWN
+        elif is_reachable:
+            # Use quality level from analyzer if available
+            if quality and quality.get('quality_level'):
+                quality_level = quality['quality_level']
+                if quality_level == 'Good':
+                    proposed_status = DeviceStatus.UP
+                elif quality_level in ['Degraded', 'Poor']:
+                    proposed_status = DeviceStatus.DEGRADED
+                else:
+                    proposed_status = DeviceStatus.DOWN
+            else:
+                proposed_status = DeviceStatus.UP
+        else:
+            proposed_status = self._status
+        
+        # Apply stability check to prevent flapping
+        if self.quality_analyzer.should_transition(proposed_status.value):
+            status_changed = True
+            old_status_for_tracking = self._status
+            self._status = proposed_status
+            
+            # Track start times - IMPORTANT: Only set when transitioning INTO a state
+            if self._status == DeviceStatus.DOWN and old_status_for_tracking != DeviceStatus.DOWN:
+                # Just entered DOWN state - record start time
                 self._down_since = self._last_check
                 self._degraded_since = None
-            elif new_status == DeviceStatus.DEGRADED:
+            elif self._status == DeviceStatus.DEGRADED and old_status_for_tracking != DeviceStatus.DEGRADED:
+                # Just entered DEGRADED state - record start time
                 self._degraded_since = self._last_check
                 self._down_since = None
-            else:
+            elif self._status in [DeviceStatus.UP, DeviceStatus.UNKNOWN]:
+                # Exiting DOWN or DEGRADED - clear timers
                 self._down_since = None
                 self._degraded_since = None
+            # If status hasn't changed, keep existing timers (don't reset!)
+        else:
+            status_changed = False
         
         # Prepare result with quality metrics
         result = {
@@ -182,14 +257,15 @@ class Device:
             'fail_count': self._fail_count,
             'retry_count': self.retry_count,
             'current_status': self._status.value,
-            'status_changed': changed,
-            'transition_type': self._get_transition(old_status, new_status) if changed else None,
+            'status_changed': status_changed,
+            'transition_type': self._get_transition(old_status, self._status) if status_changed else None,
             'downtime_seconds': self.downtime_seconds,
             'degraded_seconds': self.degraded_seconds,
-            # Quality metrics
             'packet_loss_percent': self._calculate_packet_loss(),
             'avg_latency_ms': self._calculate_avg_latency(),
-            'sample_count': len(self._success_samples)
+            'sample_count': len(self._success_samples),
+            'quality': quality,
+            'suboptimal': self.get_suboptimal_report()
         }
         
         return result
@@ -207,6 +283,26 @@ class Device:
             (DeviceStatus.DOWN, DeviceStatus.UP): "down_to_up",
         }
         return transitions.get((old, new), "unknown")
+    
+    def get_quality_report(self) -> Dict:
+        """Get detailed quality report for this device"""
+        if self._status == DeviceStatus.DOWN:
+            return {
+                'quality_score': 0,
+                'quality_level': 'Down',
+                'confidence': 1.0,
+                'issues': ['Device is DOWN - unreachable'],
+                'degradation_type': 'unreachable'
+            }
+        if self._last_quality:
+            return self._last_quality
+        return {
+            'quality_score': None,
+            'quality_level': 'Unknown',
+            'confidence': 0,
+            'issues': [],
+            'degradation_type': 'none'
+        }
     
     def to_dict(self) -> Dict:
         return {

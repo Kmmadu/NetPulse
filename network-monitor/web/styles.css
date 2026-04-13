@@ -1964,3 +1964,141 @@ tr:hover {
         padding: 8px 10px;
     }
 }
+/* ============================================
+   Additional Dashboard Styles
+   ============================================ */
+
+/* Interval Presets */
+.interval-presets {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.preset-btn {
+    padding: 8px 14px;
+    border-radius: 20px;
+    border: 1px solid rgba(15, 23, 42, 0.12);
+    background: white;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.preset-btn:hover {
+    background: rgba(79, 140, 255, 0.1);
+    border-color: rgba(79, 140, 255, 0.3);
+}
+
+.preset-btn.active {
+    background: linear-gradient(135deg, #4f8cff 0%, #7c3aed 100%);
+    color: white;
+    border-color: transparent;
+}
+
+/* Status Pill States */
+.status-pill {
+    border-radius: 999px;
+    padding: 10px 16px;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.status-active {
+    background: rgba(16, 185, 129, 0.14);
+    color: #065f46;
+    border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.status-inactive {
+    background: rgba(239, 68, 68, 0.14);
+    color: #991b1b;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.status-running {
+    background: #10b981;
+    color: white;
+    border: none;
+}
+
+.status-stopped {
+    background: #ef4444;
+    color: white;
+    border: none;
+}
+
+/* Input hint text */
+.input-hint {
+    display: block;
+    font-size: 11px;
+    color: #6b7280;
+    margin-top: 4px;
+}
+
+/* Username display */
+#username-display {
+    background: rgba(79, 140, 255, 0.12);
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #1d4ed8;
+}
+
+/* Number input for custom interval */
+.number-input {
+    width: 100%;
+    padding: 14px 16px;
+    border: 1px solid rgba(15, 23, 42, 0.12);
+    border-radius: 16px;
+    font-size: 14px;
+    background: #fff;
+    color: #0f172a;
+}
+
+/* Device count badge */
+.device-count-badge {
+    background: rgba(79, 140, 255, 0.12);
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-left: 8px;
+}
+
+/* Error message styling */
+.error-msg {
+    text-align: center;
+    padding: 40px;
+    color: #991b1b;
+    background: #fee2e2;
+    margin: 20px;
+    border-radius: 8px;
+}
+
+/* Loading spinner */
+.loading {
+    text-align: center;
+    padding: 40px;
+    color: #6b7280;
+}
+
+/* Responsive adjustments for new elements */
+@media (max-width: 768px) {
+    .interval-presets {
+        justify-content: center;
+    }
+    
+    .preset-btn {
+        padding: 6px 12px;
+        font-size: 11px;
+    }
+    
+    .control-actions {
+        justify-content: center;
+    }
+}

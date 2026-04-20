@@ -1,0 +1,18 @@
+# NetPulse Dependencies
+# Core dependencies (minimal for Phase 3)
+# Will add more as we progress
+
+# For database (Phase 3)
+# sqlite3 is built-in, no package needed
+
+# For API (Phase 5)
+# flask==2.3.0
+# fastapi==0.104.0
+# uvicorn==0.24.0
+
+# For email alerts (Phase 7)
+# secure-smtplib==0.1.1
+
+# For testing (later)
+# pytest==7.4.0
+# pytest-cov==4.1.0

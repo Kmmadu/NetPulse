@@ -33,8 +33,9 @@
     <main class="dashboard-main">
         <section class="dashboard-hero">
             <div class="hero-copy">
-                <div class="dashboard-badge">SYSTEM OVERVIEW</div>
+                <div class="dashboard-badge">LIVE MONITORING</div>
                 <h1>Network Health Dashboard</h1>
+                <p>Real-time monitoring with 5-60 second intervals</p>
             </div>
         </section>
 
@@ -42,22 +43,22 @@
             <article class="dashboard-card">
                 <div class="card-title">Total Devices</div>
                 <div class="card-value" id="total-devices">0</div>
-                <div class="card-note">Live</div>
+                <div class="card-note">Monitored</div>
             </article>
             <article class="dashboard-card">
                 <div class="card-title">UP</div>
                 <div class="card-value card-good" id="up-count">0</div>
-                <div class="card-note">0%</div>
+                <div class="card-note">Healthy</div>
             </article>
             <article class="dashboard-card">
                 <div class="card-title">DEGRADED</div>
                 <div class="card-value card-warn" id="degraded-count">0</div>
-                <div class="card-note">0%</div>
+                <div class="card-note">Slow/Unstable</div>
             </article>
             <article class="dashboard-card">
                 <div class="card-title">DOWN</div>
                 <div class="card-value card-bad" id="down-count">0</div>
-                <div class="card-note">0%</div>
+                <div class="card-note">Unreachable</div>
             </article>
         </section>
 
@@ -66,36 +67,72 @@
                 <div class="info-card-header">
                     <div>
                         <h2>Control Center</h2>
-                        <p>Manage monitoring status and interval settings.</p>
+                        <p>Start/stop monitoring and adjust check interval.</p>
                     </div>
-                    <div class="status-pill status-active">Active</div>
+                    <div class="status-pill status-inactive" id="monitor-status-pill">STOPPED</div>
                 </div>
                 <div class="control-body">
                     <div class="control-item">
-                        <label for="interval-input">CHECK INTERVAL</label>
-                        <select id="interval-input" class="select-input">
-                            <option value="5">5 Minutes</option>
-                            <option value="10">10 Minutes</option>
-                            <option value="15">15 Minutes</option>
-                            <option value="30">30 Minutes</option>
-                        </select>
+                        <label>CHECK INTERVAL (seconds)</label>
+                        <div class="interval-presets">
+                            <button type="button" class="preset-btn" data-interval="5">5s (Fast)</button>
+                            <button type="button" class="preset-btn" data-interval="10">10s</button>
+                            <button type="button" class="preset-btn" data-interval="15">15s</button>
+                            <button type="button" class="preset-btn" data-interval="30" class="active">30s (Default)</button>
+                            <button type="button" class="preset-btn" data-interval="60">60s</button>
+                        </div>
+                        <input type="number" id="interval-input" class="select-input" value="30" min="5" max="300" step="5" style="margin-top: 10px;">
                     </div>
                     <div class="control-actions">
-                        <button class="btn-start" onclick="startMonitoring()">Start</button>
-                        <button class="btn-stop" onclick="stopMonitoring()">Stop</button>
+                        <button class="btn-start" onclick="startMonitoring()">▶ Start Monitoring</button>
+                        <button class="btn-stop" onclick="stopMonitoring()">⏹ Stop Monitoring</button>
                     </div>
+                </div>
+            </article>
+
+            <!-- Alert Email Management Section -->
+            <article class="info-card" style="margin-bottom: 20px;">
+                <div class="info-card-header">
+                    <div>
+                        <h2>Alert Email Management</h2>
+                        <p>Add or remove email addresses that will receive alert notifications.</p>
+                    </div>
+                </div>
+                <div class="control-body">
+                    <div class="control-item">
+                        <label for="new-alert-email">Add New Email Address</label>
+                        <div style="display: flex; gap: 10px; margin-top: 5px;">
+                            <input type="email" id="new-alert-email" class="alert-input" placeholder="admin@example.com" style="flex: 1;">
+                            <button class="btn-save" onclick="addAlertEmail()" style="width: auto;">Add Email</button>
+                        </div>
+                    </div>
+                    
+                    <div class="control-item" style="margin-top: 15px;">
+                        <label>Configured Alert Emails</label>
+                        <div id="alert-emails-list" style="margin-top: 10px;">
+                            <div class="loading">Loading emails...</div>
+                        </div>
+                    </div>
+                    
+                    <div class="control-actions" style="margin-top: 15px;">
+                        <button class="btn-start" onclick="testAlertEmails()" style="background: #3b82f6;">Send Test Alert</button>
+                    </div>
+                    <small style="display: block; font-size: 11px; color: #6b7280; margin-top: 8px;">
+                        Test alerts will be sent to all configured email addresses to verify your SMTP settings.
+                    </small>
                 </div>
             </article>
 
             <article class="info-card alert-card" id="alerts">
                 <div>
                     <h2>Alert Notifications</h2>
-                    <p>Save the email address that will receive alert notifications.</p>
+                    <p>Save the email address that will receive alert notifications when devices go down.</p>
                 </div>
                 <div class="alert-form">
-                    <input type="email" id="alert-email" class="alert-input" placeholder="admin@enterprise.com">
+                    <input type="email" id="alert-email" class="alert-input" placeholder="your-email@example.com">
                     <button class="btn-save" onclick="saveAlertEmail()">Save Alert Email</button>
                 </div>
+                <small style="display: block; font-size: 11px; color: #6b7280; margin-top: 8px;">Alerts are sent immediately when a device is detected DOWN</small>
             </article>
         </section>
 
@@ -107,8 +144,8 @@
                 </div>
                 <div class="search-group">
                     <input type="text" id="device-search" class="search-input" placeholder="Search devices..." oninput="filterDevices()">
-                    <button class="refresh-btn" onclick="loadDevices()">Refresh</button>
-                    <button class="add-btn" onclick="openAddModal()">Add Device</button>
+                    <button class="refresh-btn" onclick="loadDevices()">⟳ Refresh</button>
+                    <button class="add-btn" onclick="openAddModal()">+ Add Device</button>
                 </div>
             </div>
             <div id="devices-table">
@@ -121,12 +158,12 @@
     <div id="modal" class="modal">
         <div class="modal-content">
             <h3 id="modal-title">Add Device</h3>
-            <input type="text" id="device-name" placeholder="Device Name">
-            <input type="text" id="device-ip" placeholder="IP Address">
-            <input type="text" id="device-group" placeholder="Group (e.g., MTN, Airtel)">
+            <input type="text" id="device-name" placeholder="Device Name (e.g., Core Router)">
+            <input type="text" id="device-ip" placeholder="IP Address (e.g., 192.168.1.1)">
+            <input type="text" id="device-group" placeholder="Group (e.g., MTN, Airtel, Core)">
             <div class="modal-buttons">
                 <button class="cancel-btn" onclick="closeModal()">Cancel</button>
-                <button class="save-btn" onclick="saveDevice()">Save</button>
+                <button class="save-btn" onclick="saveDevice()">Save Device</button>
             </div>
         </div>
     </div>

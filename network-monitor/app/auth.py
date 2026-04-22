@@ -163,6 +163,7 @@ class UserAuth:
         """Update user device"""
         updates = []
         values = []
+        
         if name:
             updates.append("name = ?")
             values.append(name)
@@ -197,3 +198,12 @@ class UserAuth:
                 (user_id, device_id)
             )
             return cursor.rowcount > 0
+    
+    def get_user_by_id(self, user_id: int) -> Optional[Dict]:
+        """Get user by ID"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, username, email, alert_email FROM users WHERE id = ?", (user_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None

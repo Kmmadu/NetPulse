@@ -23,8 +23,8 @@
 
         <div class="navbar-actions">
             <div class="user-summary">
-                <!-- <span id="username-display"></span> -->
-                <!-- <span id="email-display"></span> -->
+                <span id="username-display"></span>
+                <span id="email-display"></span>
                 <button class="logout-btn" onclick="logout()">Logout</button>
             </div>
         </div>
@@ -151,7 +151,10 @@
             document.getElementById('username-display').textContent = user.username;
             if (user.alert_email) {
                 document.getElementById('alert-email').value = user.alert_email;
-                document.getElementById('email-display').textContent = user.alert_email;
+                const emailDisplay = document.getElementById('email-display');
+                if (emailDisplay) {
+                    emailDisplay.textContent = user.alert_email;
+                }
             }
             return true;
         }
@@ -176,12 +179,17 @@
                     method: 'POST'
                 });
                 const data = await response.json();
-                if (data.success) {
-                    user.alert_email = alertEmail;
-                    localStorage.setItem('netpulse_user', JSON.stringify(user));
-                    document.getElementById('email-display').textContent = alertEmail;
-                    alert('✅ Alert email saved!');
+                if (!response.ok || !data.success) {
+                    alert('Error saving alert email');
+                    return;
                 }
+                user.alert_email = alertEmail;
+                localStorage.setItem('netpulse_user', JSON.stringify(user));
+                const emailDisplay = document.getElementById('email-display');
+                if (emailDisplay) {
+                    emailDisplay.textContent = alertEmail;
+                }
+                alert('✅ Alert email saved!');
             } catch (error) {
                 alert('Error saving alert email');
             }

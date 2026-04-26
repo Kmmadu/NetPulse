@@ -15,4 +15,7 @@ secure-smtplib==0.1.1
 
 # For testing (later)
 # pytest==7.4.0
-# pytest-cov==4.1.0
+# pytest-cov==4.1.0jinja2==3.1.2
+python-dotenv==1.0.0
+jinja2==3.1.2
+python-dotenv==1.0.0

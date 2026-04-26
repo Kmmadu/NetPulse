@@ -65,7 +65,7 @@
                 <div class="info-card-header">
                     <div>
                         <h2>Control Center</h2>
-                        <p>Start/stop monitoring and adjust check intervals</p>
+                        <p>Start or stop monitoring and adjust check intervals</p>
                     </div>
                     <div class="status-pill status-inactive" id="monitor-status-pill">STOPPED</div>
                 </div>
@@ -114,24 +114,40 @@
             </article>
         </section>
 
-        <section class="device-section" id="devices">
-            <div class="section-header">
+        <!-- Professional Devices Section -->
+        <div class="device-card">
+            <div class="device-card-header">
                 <div>
-                    <h2>Devices</h2>
-                    <p>Showing <span id="device-count">0</span> devices</p>
+                    <h2>Network Devices</h2>
+                    <p>Manage and monitor all connected devices</p>
                 </div>
-                <div class="search-group">
-                    <input type="text" id="device-search" class="search-input" placeholder="Search by name, IP, or group...">
+                <div class="device-actions-bar">
+                    <div class="search-wrapper">
+                        <input type="text" id="device-search" class="search-input" placeholder="Search by name, IP, or group">
+                    </div>
                     <button class="refresh-btn" onclick="loadDevices()">Refresh</button>
                     <button class="add-btn" onclick="openAddModal()">Add Device</button>
                 </div>
             </div>
-            <div id="devices-table">
-                <div class="loading">Loading devices...</div>
+
+            <!-- Filter chips -->
+            <div class="filter-chips">
+                <button class="filter-chip active" data-filter="all">All Devices</button>
+                <button class="filter-chip" data-filter="UP">UP</button>
+                <button class="filter-chip" data-filter="DEGRADED">Degraded</button>
+                <button class="filter-chip" data-filter="DOWN">Down</button>
             </div>
-        </section>
+
+            <!-- Devices table container -->
+            <div class="table-wrapper">
+                <div id="devices-table">
+                    <div class="loading-state">Loading devices...</div>
+                </div>
+            </div>
+        </div>
     </main>
 
+    <!-- Device Modal -->
     <div id="modal" class="modal">
         <div class="modal-content">
             <h3 id="modal-title">Add Device</h3>
@@ -332,7 +348,7 @@
                 displayDevices(data);
                 updateStats(data);
             } catch (error) {
-                document.getElementById('devices-table').innerHTML = `<div class="error-msg">Failed to load devices: ${escapeHtml(error.message)}</div>`;
+                document.getElementById('devices-table').innerHTML = `<div class="error-state">Failed to load devices: ${escapeHtml(error.message)}</div>`;
             }
         }
 
@@ -350,13 +366,28 @@
             document.getElementById('down-count').textContent = down;
         }
 
+        function setupFilterChips() {
+            const chips = document.querySelectorAll('.filter-chip');
+            chips.forEach(chip => {
+                chip.addEventListener('click', function() {
+                    chips.forEach(c => c.classList.remove('active'));
+                    this.classList.add('active');
+                    loadDevices();
+                });
+            });
+        }
+
         function displayDevices(devices) {
             const searchInput = document.getElementById('device-search');
             const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
             
+            const activeFilter = document.querySelector('.filter-chip.active');
+            const statusFilter = activeFilter ? activeFilter.getAttribute('data-filter') : 'all';
+            
             let filtered = devices;
+            
             if (query) {
-                filtered = devices.filter(d => {
+                filtered = filtered.filter(d => {
                     const name = (d.name || '').toLowerCase();
                     const ip = (d.ip_address || d.ip || '').toLowerCase();
                     const group = (d.device_group || 'Default').toLowerCase();
@@ -364,33 +395,58 @@
                 });
             }
             
-            document.getElementById('device-count').textContent = filtered.length;
+            if (statusFilter && statusFilter !== 'all') {
+                filtered = filtered.filter(d => {
+                    const status = (d.status || 'UNKNOWN').toUpperCase();
+                    return status === statusFilter.toUpperCase();
+                });
+            }
+            
+            const deviceCountSpan = document.getElementById('device-count');
+            if (deviceCountSpan) deviceCountSpan.textContent = filtered.length;
             
             if (filtered.length === 0) {
-                document.getElementById('devices-table').innerHTML = '<div class="loading">No devices found. Click "Add Device" to get started.</div>';
+                document.getElementById('devices-table').innerHTML = '<div class="empty-state">No devices found. Click "Add Device" to get started.</div>';
                 return;
             }
             
-            let html = `</td><thead>点<th>Group</th><th>Name</th><th>IP Address</th><th>Status</th><th>Latency</th><th>Last Check</th><th>Actions</th></tr></thead><tbody>`;
+            let html = `<table class="device-table">
+                <thead>
+                    <tr>
+                        <th>Group</th>
+                        <th>Device</th>
+                        <th>Status</th>
+                        <th>Latency</th>
+                        <th>Last Check</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>`;
             
             for (const d of filtered) {
                 const group = d.device_group || 'Default';
                 const ip = d.ip_address || d.ip || 'N/A';
                 const statusText = d.status || 'UNKNOWN';
-                const statusClass = `status-${statusText.toLowerCase()}`;
-                const latency = d.latency_ms ? `${d.latency_ms.toFixed(1)}ms` : 'N/A';
-                const lastCheck = d.last_check ? new Date(d.last_check).toLocaleTimeString() : 'Never';
+                let statusClass = 'status-unknown';
+                if (statusText === 'UP') statusClass = 'status-up';
+                else if (statusText === 'DEGRADED') statusClass = 'status-degraded';
+                else if (statusText === 'DOWN') statusClass = 'status-down';
+                
+                const latency = d.latency_ms ? `${d.latency_ms.toFixed(1)}ms` : '—';
+                const lastCheck = d.last_check ? new Date(d.last_check).toLocaleString() : 'Never';
                 
                 html += `<tr>
-                    <td><span class="group-badge">${escapeHtml(group)}</span></td>
-                    <td><strong>${escapeHtml(d.name)}</strong></td>
-                    <td>${escapeHtml(ip)}</td>
-                    <td><span class="status-badge-sm ${statusClass}">${escapeHtml(statusText)}</span></td>
-                    <td>${latency}</td>
-                    <td>${lastCheck}</td>
-                    <td>
-                        <button class="action-btn edit-btn" onclick="openEditModal('${d.device_id}', '${escapeHtml(d.name)}', '${escapeHtml(ip)}', '${escapeHtml(group)}')">Edit</button>
-                        <button class="action-btn delete-btn" onclick="deleteDevice('${d.device_id}')">Delete</button>
+                    <td data-label="Group"><span class="group-badge">${escapeHtml(group)}</span></td>
+                    <td data-label="Device">
+                        <div class="device-name">${escapeHtml(d.name)}</div>
+                        <div class="device-ip">${escapeHtml(ip)}</div>
+                    </td>
+                    <td data-label="Status"><span class="status-badge ${statusClass}">${escapeHtml(statusText)}</span></td>
+                    <td data-label="Latency" class="latency-value">${latency}</td>
+                    <td data-label="Last Check" class="last-check">${escapeHtml(lastCheck)}</td>
+                    <td data-label="Actions">
+                        <button class="action-btn edit" onclick="openEditModal('${d.device_id}', '${escapeHtml(d.name)}', '${escapeHtml(ip)}', '${escapeHtml(group)}')">Edit</button>
+                        <button class="action-btn delete" onclick="deleteDevice('${d.device_id}')">Delete</button>
                     </td>
                 </tr>`;
             }
@@ -490,6 +546,7 @@
             loadDevices();
             updateMonitoringStatus();
             startAutoRefresh();
+            setupFilterChips();
         }
 
         window.onclick = function(e) { 

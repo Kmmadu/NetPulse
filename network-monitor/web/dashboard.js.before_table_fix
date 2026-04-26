@@ -34,6 +34,8 @@ function checkAuth() {
         if (usernameSpan && user.username) {
             usernameSpan.textContent = user.username;
         }
+        // Load and display the saved alert email
+        loadAndDisplayAlertEmail();
     } catch (e) {
         console.error('Error parsing user data:', e);
         window.location.href = 'login.html';
@@ -55,32 +57,34 @@ async function logout() {
 
 // ==================== Alert Email Management ====================
 
-async function loadAlertEmail() {
+async function loadAndDisplayAlertEmail() {
     if (!token) return;
     
     try {
-        const response = await fetch(`${API_URL}/user/alert-emails?token=${token}`);
-        const data = await response.json();
-        
-        if (data.alert_emails && data.alert_emails.length > 0) {
-            const savedEmail = data.alert_emails[0];
-            document.getElementById('alert-email').value = savedEmail;
-            document.getElementById('current-alert-email').textContent = savedEmail;
-            document.getElementById('current-email-display').style.display = 'block';
-            
-            user.alert_email = savedEmail;
-            localStorage.setItem('netpulse_user', JSON.stringify(user));
-        } else {
-            document.getElementById('alert-email').value = '';
-            document.getElementById('current-email-display').style.display = 'none';
-        }
-    } catch (error) {
-        console.error('Error loading alert email:', error);
+        const response = await fetch(`${API_URL}/user/alert-email?token=${token}&alert_email=test`, {
+            method: 'GET'
+        });
+        // Since GET might not work, let's use the stored user data
         if (user && user.alert_email) {
             document.getElementById('alert-email').value = user.alert_email;
             document.getElementById('current-alert-email').textContent = user.alert_email;
             document.getElementById('current-email-display').style.display = 'block';
+        } else {
+            // Try to get from database directly via the alert-emails endpoint
+            const emailsResp = await fetch(`${API_URL}/user/alert-emails?token=${token}`);
+            const emailsData = await emailsResp.json();
+            if (emailsData.alert_emails && emailsData.alert_emails.length > 0) {
+                const savedEmail = emailsData.alert_emails[0];
+                document.getElementById('alert-email').value = savedEmail;
+                document.getElementById('current-alert-email').textContent = savedEmail;
+                document.getElementById('current-email-display').style.display = 'block';
+                // Update user object
+                user.alert_email = savedEmail;
+                localStorage.setItem('netpulse_user', JSON.stringify(user));
+            }
         }
+    } catch (error) {
+        console.error('Error loading alert email:', error);
     }
 }
 
@@ -91,6 +95,7 @@ async function saveAlertEmail() {
         return;
     }
     
+    // Basic email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(alertEmail)) {
         alert('Please enter a valid email address');
@@ -116,7 +121,7 @@ async function saveAlertEmail() {
             document.getElementById('current-email-display').style.display = 'block';
             alert('Alert email saved successfully');
         } else {
-            alert('Failed to save alert email');
+            alert('Failed to save alert email: ' + (data.message || data.error || 'Unknown error'));
         }
     } catch (error) {
         console.error('Error saving alert email:', error);
@@ -152,35 +157,11 @@ async function removeAlertEmail() {
             document.getElementById('current-email-display').style.display = 'none';
             alert('Alert email removed successfully');
         } else {
-            alert('Failed to remove alert email');
+            alert('Failed to remove alert email: ' + (data.message || 'Unknown error'));
         }
     } catch (error) {
         console.error('Error removing alert email:', error);
         alert('Error removing alert email');
-    }
-}
-
-async function testAlertEmails() {
-    if (!token) {
-        alert('Please login again');
-        window.location.href = 'login.html';
-        return;
-    }
-    
-    try {
-        const response = await fetch(`${API_URL}/user/alert-emails/test?token=${token}`, {
-            method: 'POST'
-        });
-        const data = await response.json();
-        
-        if (data.success) {
-            alert('Test alert sent successfully');
-        } else {
-            alert('Failed to send test alert');
-        }
-    } catch (error) {
-        console.error('Error sending test alert:', error);
-        alert('Error sending test alert');
     }
 }
 
@@ -207,11 +188,11 @@ async function startMonitoring() {
             updateMonitoringStatus();
         } else {
             const error = await response.json();
-            alert('Failed to start monitoring');
+            alert('Failed to start monitoring: ' + (error.detail || 'Unknown error'));
         }
     } catch (error) {
         console.error('Start monitoring error:', error);
-        alert('Error starting monitoring');
+        alert('Error starting monitoring: ' + error.message);
     }
 }
 
@@ -232,11 +213,12 @@ async function stopMonitoring() {
             alert('Monitoring stopped');
             updateMonitoringStatus();
         } else {
-            alert('Failed to stop monitoring');
+            const error = await response.json();
+            alert('Failed to stop monitoring: ' + (error.detail || 'Unknown error'));
         }
     } catch (error) {
         console.error('Stop monitoring error:', error);
-        alert('Error stopping monitoring');
+        alert('Error stopping monitoring: ' + error.message);
     }
 }
 
@@ -284,7 +266,7 @@ async function loadDevices() {
         console.error('Error loading devices:', error);
         const tableDiv = document.getElementById('devices-table');
         if (tableDiv) {
-            tableDiv.innerHTML = '<div class="error-state">Failed to load devices: ' + escapeHtml(error.message) + '</div>';
+            tableDiv.innerHTML = '<div class="error-msg">Failed to load devices: ' + escapeHtml(error.message) + '</div>';
         }
     }
 }
@@ -304,30 +286,21 @@ function updateStats(devices) {
     document.getElementById('down-count').textContent = down;
 }
 
+function filterDevices() {
+    loadDevices();
+}
+
 function displayDevices(devices) {
     const searchInput = document.getElementById('device-search');
     const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
     
-    const activeFilter = document.querySelector('.filter-chip.active');
-    const statusFilter = activeFilter ? activeFilter.getAttribute('data-filter') : 'all';
-    
     let filtered = devices;
-    
-    // Apply search filter
     if (query) {
-        filtered = filtered.filter(d => {
+        filtered = devices.filter(d => {
             const name = (d.name || '').toLowerCase();
-            const ip = (d.ip_address || d.ip || '').toLowerCase();
-            const group = (d.device_group || 'Default').toLowerCase();
+            const ip = (d.ip || '').toLowerCase();
+            const group = (d.group || 'Default').toLowerCase();
             return name.includes(query) || ip.includes(query) || group.includes(query);
-        });
-    }
-    
-    // Apply status filter
-    if (statusFilter && statusFilter !== 'all') {
-        filtered = filtered.filter(d => {
-            const status = (d.status || 'UNKNOWN').toUpperCase();
-            return status === statusFilter.toUpperCase();
         });
     }
     
@@ -335,54 +308,49 @@ function displayDevices(devices) {
     if (deviceCountSpan) deviceCountSpan.textContent = filtered.length;
     
     if (filtered.length === 0) {
-        document.getElementById('devices-table').innerHTML = '<div class="empty-state">No devices found. Click "Add Device" to get started.</div>';
+        const tableDiv = document.getElementById('devices-table');
+        if (tableDiv) {
+            tableDiv.innerHTML = '<div class="loading">No devices found. Click "Add Device" to add one.</div>';
+        }
         return;
     }
     
-    let html = `<table class="device-table">
-        <thead>
-            <tr>
-                <th>Group</th>
-                <th>Device</th>
-                <th>Status</th>
-                <th>Latency</th>
-                <th>Last Check</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>`;
+    let html = `<table><thead><tr>
+        <th>Group</th>
+        <th>Name</th>
+        <th>IP</th>
+        <th>Status</th>
+        <th>Latency</th>
+        <th>Last Check</th>
+        <th>Actions</th>
+    </tr></thead><tbody>`;
     
     for (const d of filtered) {
-        const group = d.device_group || 'Default';
-        const ip = d.ip_address || d.ip || 'N/A';
+        const group = d.group || 'Default';
+        const ip = d.ip || 'N/A';
         const statusText = d.status || 'UNKNOWN';
-        
-        let statusClass = 'status-unknown';
-        if (statusText === 'UP') statusClass = 'status-up';
-        else if (statusText === 'DEGRADED') statusClass = 'status-degraded';
-        else if (statusText === 'DOWN') statusClass = 'status-down';
-        
-        const latency = d.latency_ms ? `${d.latency_ms.toFixed(1)}ms` : '—';
-        const lastCheck = d.last_check ? new Date(d.last_check).toLocaleString() : 'Never';
+        const statusClass = `status-${statusText.toLowerCase()}`;
+        const latency = d.latency_ms ? `${d.latency_ms.toFixed(1)}ms` : 'N/A';
+        const lastCheck = d.last_check ? new Date(d.last_check).toLocaleTimeString() : 'Never';
+        const deviceId = d.id;
         
         html += `<tr>
-            <td data-label="Group"><span class="group-badge">${escapeHtml(group)}</span></td>
-            <td data-label="Device">
-                <div class="device-name">${escapeHtml(d.name)}</div>
-                <div class="device-ip">${escapeHtml(ip)}</div>
-            </td>
-            <td data-label="Status"><span class="status-badge ${statusClass}">${escapeHtml(statusText)}</span></td>
-            <td data-label="Latency" class="latency-value">${latency}</td>
-            <td data-label="Last Check" class="last-check">${escapeHtml(lastCheck)}</div></td>
-            <td data-label="Actions">
-                <button class="action-btn edit" onclick="openEditModal('${d.device_id}', '${escapeHtml(d.name)}', '${escapeHtml(ip)}', '${escapeHtml(group)}')">Edit</button>
-                <button class="action-btn delete" onclick="deleteDevice('${d.device_id}')">Delete</button>
+            <td><span class="group-badge">${escapeHtml(group)}</span></td>
+            <td><strong>${escapeHtml(d.name)}</strong></td>
+            <td>${escapeHtml(ip)}</td>
+            <td><span class="status-badge-sm ${statusClass}">${escapeHtml(statusText)}</span></td>
+            <td>${latency}</td>
+            <td>${lastCheck}</td>
+            <td>
+                <button class="action-btn edit-btn" onclick="openEditModal('${deviceId}', '${escapeHtml(d.name)}', '${escapeHtml(ip)}', '${escapeHtml(group)}')">Edit</button>
+                <button class="action-btn delete-btn" onclick="deleteDevice('${deviceId}')">Delete</button>
             </td>
         </tr>`;
     }
     html += `</tbody></table>`;
     
-    document.getElementById('devices-table').innerHTML = html;
+    const tableDiv = document.getElementById('devices-table');
+    if (tableDiv) tableDiv.innerHTML = html;
 }
 
 // ==================== Modal Operations ====================
@@ -448,7 +416,7 @@ async function saveDevice() {
         }
     } catch (error) {
         console.error('Error saving device:', error);
-        alert('Error saving device');
+        alert('Error saving device: ' + error.message);
     }
 }
 
@@ -472,21 +440,8 @@ async function deleteDevice(id) {
         }
     } catch (error) {
         console.error('Error deleting device:', error);
-        alert('Error deleting device');
+        alert('Error deleting device: ' + error.message);
     }
-}
-
-// ==================== Filter Chips ====================
-
-function setupFilterChips() {
-    const chips = document.querySelectorAll('.filter-chip');
-    chips.forEach(chip => {
-        chip.addEventListener('click', function() {
-            chips.forEach(c => c.classList.remove('active'));
-            this.classList.add('active');
-            loadDevices();
-        });
-    });
 }
 
 // ==================== Interval Presets ====================
@@ -505,17 +460,6 @@ function setupIntervalPresets() {
     });
 }
 
-// ==================== Search ====================
-
-function setupSearch() {
-    const searchInput = document.getElementById('device-search');
-    if (searchInput) {
-        searchInput.addEventListener('input', function() {
-            loadDevices();
-        });
-    }
-}
-
 // ==================== Auto Refresh ====================
 
 function startAutoRefresh() {
@@ -529,14 +473,12 @@ function startAutoRefresh() {
 // ==================== Initialization ====================
 
 function init() {
+    loadAndDisplayAlertEmail();
     if (checkAuth()) {
-        loadAlertEmail();
         loadDevices();
         updateMonitoringStatus();
         startAutoRefresh();
-        setupFilterChips();
         setupIntervalPresets();
-        setupSearch();
     }
 }
 
@@ -550,3 +492,119 @@ window.onclick = function(e) {
 
 // Start everything when page loads
 document.addEventListener('DOMContentLoaded', init);
+
+// Function to load and display the saved alert email from database
+async function loadAndDisplayAlertEmail() {
+    if (!token) return;
+    
+    try {
+        // First try to get from the alert-emails endpoint
+        const response = await fetch(`${API_URL}/user/alert-emails?token=${token}`);
+        const data = await response.json();
+        
+        console.log('Alert emails response:', data);
+        
+        if (data.alert_emails && data.alert_emails.length > 0) {
+            const savedEmail = data.alert_emails[0];
+            document.getElementById('alert-email').value = savedEmail;
+            document.getElementById('current-alert-email').textContent = savedEmail;
+            document.getElementById('current-email-display').style.display = 'block';
+            
+            // Update user object
+            user.alert_email = savedEmail;
+            localStorage.setItem('netpulse_user', JSON.stringify(user));
+        } else {
+            // No email saved
+            document.getElementById('alert-email').value = '';
+            document.getElementById('current-email-display').style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Error loading alert email:', error);
+        // Fallback: try to get from user object
+        if (user && user.alert_email) {
+            document.getElementById('alert-email').value = user.alert_email;
+            document.getElementById('current-alert-email').textContent = user.alert_email;
+            document.getElementById('current-email-display').style.display = 'block';
+        }
+    }
+}
+
+// Override the saveAlertEmail function to reload the display
+const originalSaveAlertEmail = saveAlertEmail;
+saveAlertEmail = async function() {
+    const alertEmail = document.getElementById('alert-email').value.trim();
+    if (!alertEmail) {
+        alert('Please enter an email address');
+        return;
+    }
+    
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(alertEmail)) {
+        alert('Please enter a valid email address');
+        return;
+    }
+    
+    if (!token) {
+        alert('Please login again');
+        window.location.href = 'login.html';
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_URL}/user/alert-email?token=${token}&alert_email=${encodeURIComponent(alertEmail)}`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+            user.alert_email = alertEmail;
+            localStorage.setItem('netpulse_user', JSON.stringify(user));
+            alert('Alert email saved successfully');
+            // Reload the display
+            await loadAndDisplayAlertEmail();
+        } else {
+            alert('Failed to save alert email: ' + (data.message || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error saving alert email:', error);
+        alert('Error saving alert email');
+    }
+};
+
+// Override the removeAlertEmail function
+const originalRemoveAlertEmail = removeAlertEmail;
+removeAlertEmail = async function() {
+    const currentEmail = document.getElementById('alert-email').value.trim();
+    if (!currentEmail) {
+        alert('No email to remove');
+        return;
+    }
+    
+    if (!confirm(`Remove ${currentEmail} from alert notifications?`)) return;
+    
+    if (!token) {
+        alert('Please login again');
+        window.location.href = 'login.html';
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_URL}/user/alert-email?token=${token}&alert_email=${encodeURIComponent(currentEmail)}`, {
+            method: 'DELETE'
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+            user.alert_email = null;
+            localStorage.setItem('netpulse_user', JSON.stringify(user));
+            alert('Alert email removed successfully');
+            // Reload the display
+            await loadAndDisplayAlertEmail();
+        } else {
+            alert('Failed to remove alert email: ' + (data.message || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error removing alert email:', error);
+        alert('Error removing alert email');
+    }
+};

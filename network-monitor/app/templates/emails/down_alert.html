@@ -2,74 +2,140 @@
 <html>
 <head>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #1a202c; }
-        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .header { background: linear-gradient(135deg, #ef4444, #dc2626); color: white; padding: 30px; text-align: center; border-radius: 12px 12px 0 0; }
-        .content { background: #ffffff; padding: 30px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 12px 12px; }
-        .metric { background: #f7fafc; padding: 15px; margin: 15px 0; border-radius: 8px; border-left: 4px solid #ef4444; }
-        .metric-label { font-weight: 600; color: #4a5568; margin-bottom: 8px; }
-        .metric-value { font-size: 24px; font-weight: 700; color: #2d3748; }
-        .actions { background: #fef5e7; padding: 15px; margin: 20px 0; border-radius: 8px; border-left: 4px solid #ed8936; }
-        .footer { text-align: center; padding: 20px; color: #718096; font-size: 12px; }
-        .badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
-        .badge-down { background: #fed7d7; color: #c53030; }
-        .timestamp { color: #718096; font-size: 12px; text-align: right; margin-top: 20px; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: #1a202c;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 550px;
+            margin: 20px auto;
+            background: #ffffff;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .header {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+            padding: 24px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        .header p {
+            margin: 8px 0 0;
+            opacity: 0.9;
+            font-size: 14px;
+        }
+        .content {
+            padding: 28px;
+        }
+        .device-info {
+            background: #fef2f2;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            border-left: 4px solid #ef4444;
+        }
+        .device-name {
+            font-size: 20px;
+            font-weight: 700;
+            color: #dc2626;
+            margin-bottom: 8px;
+        }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .info-label {
+            font-weight: 600;
+            color: #4b5563;
+        }
+        .info-value {
+            color: #1f2937;
+            font-family: monospace;
+        }
+        .actions {
+            background: #f3f4f6;
+            padding: 16px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        .actions h4 {
+            margin: 0 0 12px 0;
+            color: #374151;
+        }
+        .actions ul {
+            margin: 0;
+            padding-left: 20px;
+        }
+        .actions li {
+            margin: 6px 0;
+            color: #4b5563;
+        }
+        .footer {
+            background: #f9fafb;
+            padding: 16px;
+            text-align: center;
+            font-size: 12px;
+            color: #6b7280;
+            border-top: 1px solid #e5e7eb;
+        }
+        .timestamp {
+            font-size: 12px;
+            color: #6b7280;
+            text-align: right;
+            margin-top: 16px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🚨 Device DOWN Alert</h1>
+            <h1>DEVICE IS DOWN</h1>
             <p>Immediate action required</p>
         </div>
         <div class="content">
-            <h2>{{ device_name }}</h2>
-            <p><strong>IP Address:</strong> {{ device_ip }}</p>
-            <p><span class="badge badge-down">DOWN</span></p>
-            
-            <div class="metric">
-                <div class="metric-label">📊 Quality Score</div>
-                <div class="metric-value">{{ quality_score }}/100</div>
+            <div class="device-info">
+                <div class="device-name">{{ device_name }}</div>
+                <div class="info-row">
+                    <span class="info-label">Device Group:</span>
+                    <span class="info-value">{{ device_group }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">IP Address:</span>
+                    <span class="info-value">{{ device_ip }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Down Since:</span>
+                    <span class="info-value">{{ down_time }}</span>
+                </div>
             </div>
-            
-            <div class="metric">
-                <div class="metric-label">📦 Packet Loss</div>
-                <div class="metric-value">{{ packet_loss_percent }}%</div>
-            </div>
-            
-            <div class="metric">
-                <div class="metric-label">✅ Success Rate</div>
-                <div class="metric-value">{{ success_rate }}%</div>
-            </div>
-            
-            {% if issues %}
-            <div class="actions">
-                <strong>⚠️ Detected Issues:</strong>
-                <ul>
-                    {% for issue in issues %}
-                    <li>{{ issue }}</li>
-                    {% endfor %}
-                </ul>
-            </div>
-            {% endif %}
             
             <div class="actions">
-                <strong>🔧 Recommended Actions:</strong>
+                <h4>Recommended Actions:</h4>
                 <ul>
                     <li>Verify device power and network connectivity</li>
-                    <li>Check device logs for errors</li>
-                    <li>Verify IP address configuration</li>
-                    <li>Check for network congestion or routing issues</li>
+                    <li>Check if device is responding to ping</li>
+                    <li>Review device logs for errors</li>
+                    <li>Check for network outages or routing issues</li>
                 </ul>
             </div>
             
             <div class="timestamp">
-                Alert Time: {{ timestamp }}
+                Alert generated: {{ alert_time }}
             </div>
         </div>
         <div class="footer">
             <p>NetPulse Network Monitoring System</p>
-            <p>This is an automated alert. Please do not reply to this email.</p>
+            <p>This is an automated alert. Please investigate the issue.</p>
         </div>
     </div>
 </body>

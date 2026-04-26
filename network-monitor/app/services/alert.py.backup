@@ -281,7 +281,7 @@ class AlertService:
         self._last_known_status[device_id] = new_status
         return True
     
-    def _determine_alert_subject_OLD(self, alert_type: str, device_name: str, 
+    def _determine_alert_subject(self, alert_type: str, device_name: str, 
                                   metrics: Dict, downtime_str: str = "") -> str:
         """Generate appropriate subject line based on alert type and severity"""
         prefix = "[NetPulse]"
@@ -590,24 +590,3 @@ NetPulse Network Monitoring System
 =======================================================================
 """
         return self._send_email(subject, body)
-def _determine_alert_subject(self, alert_type: str, device_name: str, 
-                              metrics: Dict, downtime_str: str = "") -> str:
-    """Generate appropriate subject line based on alert type"""
-    
-    if alert_type in ["critical_down", "down"]:
-        return f"ALERT: {device_name} IS DOWN"
-    
-    elif alert_type == "recovery":
-        return f"RECOVERY: {device_name} has been restored (was down for {downtime_str})"
-    
-    elif alert_type == "degraded":
-        degradation = metrics.get('degradation_type', 'performance')
-        return f"🟡 {device_name} is DEGRADED - {degradation.replace('_', ' ').title()}"
-    
-    elif alert_type == "suboptimal":
-        return f"NOTICE: {device_name} - Suboptimal Performance Detected"
-    
-    elif alert_type == "early_warning":
-        return f"EARLY WARNING: {device_name} - Performance Trending Down"
-    
-    return f"STATUS CHANGE: {device_name} - Status Change Notification"

@@ -37,28 +37,28 @@
             </div>
         </section>
 
-        <section class="overview-grid" id="stats">
-            <article class="dashboard-card">
-                <div class="card-title">Total Devices</div>
-                <div class="card-value" id="total-devices">0</div>
-                <div class="card-note">Monitored</div>
-            </article>
-            <article class="dashboard-card">
-                <div class="card-title">UP</div>
-                <div class="card-value card-good" id="up-count">0</div>
-                <div class="card-note">Healthy</div>
-            </article>
-            <article class="dashboard-card">
-                <div class="card-title">DEGRADED</div>
-                <div class="card-value card-warn" id="degraded-count">0</div>
-                <div class="card-note">Performance Issues</div>
-            </article>
-            <article class="dashboard-card">
-                <div class="card-title">DOWN</div>
-                <div class="card-value card-bad" id="down-count">0</div>
-                <div class="card-note">Unreachable</div>
-            </article>
-        </section>
+<section class="overview-grid" id="stats">
+    <article class="dashboard-card clickable-card" data-filter="all">
+        <div class="card-title">Total Devices</div>
+        <div class="card-value" id="total-devices">0</div>
+        <div class="card-note">Monitored</div>
+    </article>
+    <article class="dashboard-card clickable-card" data-filter="UP">
+        <div class="card-title">UP</div>
+        <div class="card-value card-good" id="up-count">0</div>
+        <div class="card-note">Healthy</div>
+    </article>
+    <article class="dashboard-card clickable-card" data-filter="DEGRADED">
+        <div class="card-title">DEGRADED</div>
+        <div class="card-value card-warn" id="degraded-count">0</div>
+        <div class="card-note">Performance Issues</div>
+    </article>
+    <article class="dashboard-card clickable-card" data-filter="DOWN">
+        <div class="card-title">DOWN</div>
+        <div class="card-value card-bad" id="down-count">0</div>
+        <div class="card-note">Unreachable</div>
+    </article>
+</section>
 
         <section class="control-grid">
             <article class="info-card">
@@ -131,12 +131,6 @@
             </div>
 
             <!-- Filter chips -->
-            <div class="filter-chips">
-                <button class="filter-chip active" data-filter="all">All Devices</button>
-                <button class="filter-chip" data-filter="UP">UP</button>
-                <button class="filter-chip" data-filter="DEGRADED">Degraded</button>
-                <button class="filter-chip" data-filter="DOWN">Down</button>
-            </div>
 
             <!-- Devices table container -->
             <div class="table-wrapper">

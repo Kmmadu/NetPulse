@@ -1174,3 +1174,43 @@ body:not(.lp-body):not(.auth-body) {
         font-size: 28px;
     }
 }
+
+/* Clickable stats cards for filtering */
+.clickable-card {
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.clickable-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.12);
+}
+
+.clickable-card:active {
+    transform: translateY(0);
+}
+
+.clickable-card.active-filter {
+    border: 2px solid #4f8cff;
+    box-shadow: 0 0 0 3px rgba(79, 140, 255, 0.2);
+    background: rgba(79, 140, 255, 0.05);
+}
+
+.clickable-card.active-filter::after {
+    content: "✓";
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: #4f8cff;
+    color: white;
+    width: 22px;
+    height: 22px;
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: bold;
+}

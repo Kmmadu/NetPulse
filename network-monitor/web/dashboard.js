@@ -550,3 +550,152 @@ window.onclick = function(e) {
 
 // Start everything when page loads
 document.addEventListener('DOMContentLoaded', init);
+
+// Override deleteDevice to ensure proper refresh
+const originalDeleteDevice = deleteDevice;
+deleteDevice = async function(id) {
+    if (!confirm('Delete this device?')) return;
+    
+    if (!token) {
+        alert('Please login again');
+        window.location.href = 'login.html';
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_URL}/user/devices/${id}?token=${token}`, { method: 'DELETE' });
+        const data = await response.json();
+        
+        if (response.ok && data.success) {
+            alert('Device deleted successfully');
+            // Force a complete refresh
+            await loadDevices();
+            updateMonitoringStatus();
+        } else {
+            alert('Failed to delete device: ' + (data.message || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error deleting device:', error);
+        alert('Error deleting device');
+    }
+};
+
+// Override saveDevice to ensure proper refresh after update
+const originalSaveDevice = saveDevice;
+saveDevice = async function() {
+    const name = document.getElementById('device-name').value.trim();
+    const ip = document.getElementById('device-ip').value.trim();
+    const group = document.getElementById('device-group').value.trim() || 'Default';
+    
+    if (!name || !ip) { 
+        alert('Please enter name and IP'); 
+        return; 
+    }
+    
+    if (!token) {
+        alert('Please login again');
+        window.location.href = 'login.html';
+        return;
+    }
+    
+    try {
+        let response;
+        let url;
+        
+        if (editingDeviceId) {
+            url = `${API_URL}/user/devices/${editingDeviceId}?token=${token}&name=${encodeURIComponent(name)}&ip=${encodeURIComponent(ip)}&group=${encodeURIComponent(group)}`;
+            response = await fetch(url, { method: 'PUT' });
+        } else {
+            url = `${API_URL}/user/devices?token=${token}&name=${encodeURIComponent(name)}&ip=${encodeURIComponent(ip)}&group=${encodeURIComponent(group)}`;
+            response = await fetch(url, { method: 'POST' });
+        }
+        
+        const data = await response.json();
+        
+        if (response.ok && data.success) {
+            alert(editingDeviceId ? 'Device updated successfully' : 'Device added successfully');
+            closeModal();
+            // Force a complete refresh of devices
+            await loadDevices();
+            updateMonitoringStatus();
+        } else {
+            alert(editingDeviceId ? 'Failed to update device' : 'Failed to add device');
+        }
+    } catch (error) {
+        console.error('Error saving device:', error);
+        alert('Error saving device');
+    }
+};
+
+// Setup clickable stats cards for filtering
+function setupClickableCards() {
+    const cards = document.querySelectorAll('.clickable-card');
+    let activeFilter = 'all';
+    
+    cards.forEach(card => {
+        card.addEventListener('click', function() {
+            const filter = this.getAttribute('data-filter');
+            
+            // Remove active class from all cards
+            cards.forEach(c => c.classList.remove('active-filter'));
+            
+            // Add active class to clicked card
+            this.classList.add('active-filter');
+            
+            // Store current filter
+            window.currentStatusFilter = filter;
+            
+            // Reload devices with filter
+            loadDevices();
+        });
+    });
+}
+
+// Override the loadDevices function to use the filter
+const originalLoadDevices = loadDevices;
+loadDevices = async function() {
+    if (!token) {
+        window.location.href = 'login.html';
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_URL}/user/devices?token=${token}`);
+        if (!response.ok) {
+            throw new Error('Failed to load devices');
+        }
+        
+        const devices = await response.json();
+        
+        // Apply status filter if active
+        let filteredDevices = devices;
+        if (window.currentStatusFilter && window.currentStatusFilter !== 'all') {
+            filteredDevices = devices.filter(d => {
+                const status = (d.status || 'UNKNOWN').toUpperCase();
+                return status === window.currentStatusFilter.toUpperCase();
+            });
+        }
+        
+        displayDevices(filteredDevices);
+        updateStats(devices); // Show actual stats, not filtered
+    } catch (error) {
+        console.error('Error loading devices:', error);
+        const tableDiv = document.getElementById('devices-table');
+        if (tableDiv) {
+            tableDiv.innerHTML = '<div class="error-state">Failed to load devices: ' + escapeHtml(error.message) + '</div>';
+        }
+    }
+};
+
+// Update the init function to setup clickable cards
+function init() {
+    if (checkAuth()) {
+        loadAlertEmail();
+        loadDevices();
+        updateMonitoringStatus();
+        startAutoRefresh();
+        setupClickableCards();
+        setupIntervalPresets();
+        setupSearch();
+    }
+}

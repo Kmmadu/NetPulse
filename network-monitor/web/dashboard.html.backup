@@ -132,6 +132,7 @@
         </section>
     </main>
 
+    <!-- Device Modal -->
     <div id="modal" class="modal">
         <div class="modal-content">
             <h3 id="modal-title">Add Device</h3>
@@ -163,6 +164,8 @@
             
             user = JSON.parse(userStr);
             document.getElementById('username-display').textContent = user.username;
+            
+            // Load saved alert email
             loadCurrentAlertEmail();
             return true;
         }
@@ -222,7 +225,7 @@
                     document.getElementById('current-email-display').style.display = 'block';
                     alert('Alert email saved successfully');
                 } else {
-                    alert('Error saving alert email: ' + (data.message || 'Unknown error'));
+                    alert('Error saving alert email');
                 }
             } catch (error) {
                 alert('Error saving alert email');
@@ -250,7 +253,7 @@
                     document.getElementById('current-email-display').style.display = 'none';
                     alert('Alert email removed successfully');
                 } else {
-                    alert('Failed to remove alert email: ' + (data.message || 'Unknown error'));
+                    alert('Failed to remove alert email');
                 }
             } catch (error) {
                 alert('Error removing alert email');
@@ -280,8 +283,6 @@
                 if (response.ok) {
                     alert('Monitoring started');
                     updateMonitoringStatus();
-                } else {
-                    alert('Failed to start monitoring');
                 }
             } catch (error) {
                 alert('Error starting monitoring');
@@ -294,8 +295,6 @@
                 if (response.ok) {
                     alert('Monitoring stopped');
                     updateMonitoringStatus();
-                } else {
-                    alert('Failed to stop monitoring');
                 }
             } catch (error) {
                 alert('Error stopping monitoring');
@@ -318,11 +317,6 @@
         }
 
         async function loadDevices() {
-            if (!token) {
-                window.location.href = 'login.html';
-                return;
-            }
-            
             try {
                 const response = await fetch(`${API_URL}/user/devices?token=${token}`);
                 const data = await response.json();
@@ -371,7 +365,7 @@
                 return;
             }
             
-            let html = `</td><thead>点<th>Group</th><th>Name</th><th>IP Address</th><th>Status</th><th>Latency</th><th>Last Check</th><th>Actions</th></tr></thead><tbody>`;
+            let html = `<table><thead><tr><th>Group</th><th>Name</th><th>IP Address</th><th>Status</th><th>Latency</th><th>Last Check</th><th>Actions</th></tr></thead><tbody>`;
             
             for (const d of filtered) {
                 const group = d.device_group || 'Default';
@@ -383,15 +377,15 @@
                 
                 html += `<tr>
                     <td><span class="group-badge">${escapeHtml(group)}</span></td>
-                    <td><strong>${escapeHtml(d.name)}</strong></td>
-                    <td>${escapeHtml(ip)}</td>
-                    <td><span class="status-badge-sm ${statusClass}">${escapeHtml(statusText)}</span></td>
-                    <td>${latency}</td>
-                    <td>${lastCheck}</td>
+                    <td><strong>${escapeHtml(d.name)}</strong></div></td>
+                    <td>${escapeHtml(ip)}</div></td>
+                    <td><span class="status-badge-sm ${statusClass}">${escapeHtml(statusText)}</span></div></td>
+                    <td>${latency}</div></td>
+                    <td>${lastCheck}</div></div>
                     <td>
                         <button class="action-btn edit-btn" onclick="openEditModal('${d.device_id}', '${escapeHtml(d.name)}', '${escapeHtml(ip)}', '${escapeHtml(group)}')">Edit</button>
                         <button class="action-btn delete-btn" onclick="deleteDevice('${d.device_id}')">Delete</button>
-                    </td>
+                    </div>
                 </tr>`;
             }
             html += `</tbody></table>`;
@@ -473,6 +467,7 @@
             }, 5000);
         }
 
+        // Event listeners
         document.getElementById('device-search').addEventListener('input', function() {
             loadDevices();
         });
@@ -486,6 +481,7 @@
             });
         });
 
+        // Initialize
         if (checkAuth()) {
             loadDevices();
             updateMonitoringStatus();

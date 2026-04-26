@@ -1,0 +1,842 @@
+#!/usr/bin/env python3
+"""
+NetPulse REST API
+FastAPI-based interface for web frontend - Clean JSON, no emojis
+"""
+
+import threading
+import time
+import sys
+import os
+import secrets
+import sqlite3
+from datetime import datetime
+from typing import List, Optional
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from fastapi import FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, EmailStr
+from contextlib import asynccontextmanager
+
+from app.core.monitor_engine import MonitoringEngine
+from app.models.device import Device, DeviceStatus
+from app.auth import UserAuth
+from app.services.alert import AlertService
+
+
+# Session storage
+_sessions = {}
+
+# User-specific monitoring engines and threads
+_monitoring_engines = {}
+_monitoring_threads = {}
+_monitoring_active = {}
+_monitoring_intervals = {}
+
+
+# ==================== Pydantic Models ====================
+
+class DeviceCreate(BaseModel):
+    """Model for creating a new device"""
+    name: str = Field(..., description="Device name", example="Gateway")
+    ip: str = Field(..., description="IP address", example="192.168.1.1")
+
+
+class DeviceUpdate(BaseModel):
+    """Model for updating a device"""
+    name: Optional[str] = Field(None, description="Device name")
+    ip: Optional[str] = Field(None, description="IP address")
+
+
+class DeviceResponse(BaseModel):
+    """Model for device response - clean JSON, no emojis"""
+    id: str
+    name: str
+    ip: str
+    group: str = "Default"
+    status: str
+    latency_ms: Optional[float] = None
+    packet_loss_percent: float = 0.0
+    avg_latency_ms: Optional[float] = None
+    last_check: Optional[str] = None
+    downtime_seconds: Optional[float] = None
+    downtime_display: Optional[str] = None
+    quality_score: Optional[int] = None
+    quality_level: Optional[str] = None
+    jitter_ms: Optional[float] = None
+    # Suboptimal detection fields
+    is_suboptimal: Optional[bool] = None
+    suboptimal_severity: Optional[str] = None
+    suboptimal_reasons: Optional[List[str]] = None
+    suboptimal_trend: Optional[str] = None
+    quality_impact: Optional[int] = None
+
+
+class StatusResponse(BaseModel):
+    """Overall system status"""
+    total_devices: int
+    devices_up: int
+    devices_degraded: int
+    devices_down: int
+    devices_unknown: int
+    last_update: str
+
+
+class LogResponse(BaseModel):
+    """Log entry response"""
+    id: int
+    device_id: str
+    device_name: str
+    timestamp: str
+    status: str
+    latency_ms: Optional[float] = None
+    packet_loss_percent: float = 0.0
+    quality_score: Optional[int] = None
+
+
+class MonitoringStatus(BaseModel):
+    """Monitoring service status"""
+    running: bool
+    interval: int
+    devices_count: int
+    last_check: Optional[str] = None
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AlertEmailUpdate(BaseModel):
+    """Model for updating alert email"""
+    alert_email: EmailStr
+
+
+# ==================== Helper Functions ====================
+
+def get_engine_for_user(user_id: int):
+    """Get or create monitoring engine for a specific user"""
+    global _monitoring_engines
+    if user_id not in _monitoring_engines:
+        _monitoring_engines[user_id] = MonitoringEngine(user_id=user_id, max_workers=10)
+        print(f"[ENGINE] Created new monitoring engine for user {user_id}")
+    return _monitoring_engines[user_id]
+
+
+def format_downtime(seconds: Optional[float]) -> Optional[str]:
+    """Convert seconds to human-readable format"""
+    if not seconds:
+        return None
+    
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    elif seconds < 3600:
+        minutes = int(seconds / 60)
+        remaining_seconds = int(seconds % 60)
+        if remaining_seconds > 0:
+            return f"{minutes}m {remaining_seconds}s"
+        return f"{minutes}m"
+    else:
+        hours = int(seconds / 3600)
+        remaining_minutes = int((seconds % 3600) / 60)
+        if remaining_minutes > 0:
+            return f"{hours}h {remaining_minutes}m"
+        return f"{hours}h"
+
+
+def _device_to_response(device) -> DeviceResponse:
+    """Convert device model to API response - with downtime, quality, and suboptimal tracking"""
+    try:
+        last_check = None
+        if hasattr(device, '_last_check') and device._last_check:
+            last_check = device._last_check.isoformat()
+        
+        downtime_seconds = None
+        if hasattr(device, 'downtime_seconds') and device.downtime_seconds:
+            downtime_seconds = device.downtime_seconds
+        
+        quality_score = None
+        quality_level = None
+        jitter_ms = None
+        packet_loss_percent = 0.0
+        avg_latency_ms = None
+        
+        if hasattr(device, 'quality_score') and device.quality_score:
+            quality_score = int(round(device.quality_score))
+        if hasattr(device, 'quality_level') and device.quality_level:
+            quality_level = device.quality_level
+        if hasattr(device, '_last_quality') and device._last_quality:
+            quality = device._last_quality
+            jitter_ms = quality.get('metrics', {}).get('jitter_ms')
+            packet_loss_percent = quality.get('metrics', {}).get('packet_loss_percent', 0.0)
+            avg_latency_ms = quality.get('metrics', {}).get('avg_latency_ms')
+        
+        # Get group from device
+        device_group = getattr(device, 'device_group', 'Default')
+        
+        # Get suboptimal report
+        is_suboptimal = False
+        suboptimal_severity = None
+        suboptimal_reasons = []
+        suboptimal_trend = None
+        quality_impact = None
+        
+        if hasattr(device, 'get_suboptimal_report'):
+            suboptimal = device.get_suboptimal_report()
+            is_suboptimal = suboptimal.get('is_suboptimal', False)
+            suboptimal_severity = suboptimal.get('severity')
+            suboptimal_reasons = suboptimal.get('reasons', [])
+            suboptimal_trend = suboptimal.get('trend')
+            quality_impact = suboptimal.get('quality_impact')
+        
+        return DeviceResponse(
+            id=device.device_id,
+            name=device.name,
+            ip=device.ip_address,
+            group=device_group,
+            status=device.status.value if device.status else "UNKNOWN",
+            latency_ms=device._last_latency if hasattr(device, '_last_latency') else None,
+            packet_loss_percent=packet_loss_percent,
+            avg_latency_ms=avg_latency_ms,
+            last_check=last_check,
+            downtime_seconds=downtime_seconds,
+            downtime_display=format_downtime(downtime_seconds),
+            quality_score=quality_score,
+            quality_level=quality_level,
+            jitter_ms=jitter_ms,
+            is_suboptimal=is_suboptimal,
+            suboptimal_severity=suboptimal_severity,
+            suboptimal_reasons=suboptimal_reasons,
+            suboptimal_trend=suboptimal_trend,
+            quality_impact=quality_impact
+        )
+    except Exception as e:
+        print(f"Error converting device: {e}")
+        return DeviceResponse(
+            id=getattr(device, 'device_id', 'unknown'),
+            name=getattr(device, 'name', 'unknown'),
+            ip=getattr(device, 'ip_address', 'unknown'),
+            group="Default",
+            status="UNKNOWN",
+            latency_ms=None,
+            packet_loss_percent=0.0,
+            avg_latency_ms=None,
+            last_check=None,
+            downtime_seconds=None,
+            downtime_display=None,
+            quality_score=None,
+            quality_level=None,
+            jitter_ms=None,
+            is_suboptimal=False,
+            suboptimal_severity=None,
+            suboptimal_reasons=[],
+            suboptimal_trend=None,
+            quality_impact=None
+        )
+
+
+def run_monitoring_loop(user_id: int, interval: int):
+    """Background monitoring thread function for a specific user"""
+    global _monitoring_active
+    
+    engine = get_engine_for_user(user_id)
+    
+    # Get user's alert emails
+    with sqlite3.connect("data/monitor.db") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT alert_email FROM users WHERE id = ?", (user_id,))
+        row = cursor.fetchone()
+        alert_emails = row[0].split(',') if row and row[0] else []
+    
+    # Create alert service for this user
+    alert_service = AlertService(to_addrs=alert_emails if alert_emails else None)
+    
+    print(f"[Monitor] Starting monitoring for user {user_id} with {len(engine.get_devices())} devices")
+    print(f"[Monitor] Alert emails: {', '.join(alert_emails) if alert_emails else 'None configured'}")
+    
+    while _monitoring_active.get(user_id, False):
+        cycle_start = time.time()
+        
+        try:
+            results = engine.check_all_devices()
+            
+            for result in results:
+                # Send alert on status change using the alert service
+                if result.get('status_changed'):
+                    alert_service.send(result)
+                    
+                    status = result['current_status']
+                    name = result['name']
+                    if 'down' in result.get('transition_type', ''):
+                        print(f"[Monitor User {user_id}] {name} is now DOWN - Alert sent")
+                    elif 'up' in result.get('transition_type', ''):
+                        downtime = result.get('downtime_seconds', 0)
+                        if downtime:
+                            mins = int(downtime / 60)
+                            secs = int(downtime % 60)
+                            print(f"[Monitor User {user_id}] {name} is back UP (was down for {mins}m {secs}s) - Alert sent")
+                        else:
+                            print(f"[Monitor User {user_id}] {name} is now UP - Alert sent")
+                    
+                    quality = result.get('quality')
+                    if quality and quality.get('degradation_type') != 'none':
+                        print(f"[Monitor User {user_id}] {name} quality: {quality.get('quality_level')} ({quality.get('quality_score')}%) - {quality.get('degradation_type')}")
+                    
+                    suboptimal = result.get('suboptimal', {})
+                    if suboptimal.get('is_suboptimal') and suboptimal.get('severity') in ['moderate', 'severe']:
+                        print(f"[Monitor User {user_id}] ⚠️ {name} is suboptimal: {suboptimal.get('severity')} - {', '.join(suboptimal.get('reasons', [])[:2])}")
+            
+        except Exception as e:
+            print(f"[Monitor User {user_id}] Error: {e}")
+        
+        elapsed = time.time() - cycle_start
+        sleep_time = max(0, interval - elapsed)
+        if sleep_time > 0 and _monitoring_active.get(user_id, False):
+            time.sleep(sleep_time)
+    
+    print(f"[Monitor] Monitoring stopped for user {user_id}")
+
+
+# ==================== FastAPI App ====================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup/shutdown"""
+    print("Starting NetPulse API...")
+    yield
+    print("Shutting down NetPulse API...")
+
+
+app = FastAPI(
+    title="NetPulse API",
+    description="Network Monitoring System API",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ==================== Root Endpoint ====================
+
+@app.get("/", tags=["Root"])
+async def root():
+    return {
+        "name": "NetPulse API",
+        "version": "1.0.0",
+        "status": "running",
+        "endpoints": {
+            "devices": "/api/devices",
+            "status": "/api/status",
+            "history": "/api/history/{device_id}",
+            "monitoring": "/api/monitoring/status",
+            "auth": "/api/auth/register, /api/auth/login",
+            "alerts": "/api/user/alert-emails"
+        }
+    }
+
+
+# ==================== Authentication Endpoints ====================
+
+@app.post("/api/auth/register", tags=["Authentication"])
+async def register(request: RegisterRequest):
+    """Register a new user"""
+    auth = UserAuth()
+    user_id = auth.register(request.username, request.email, request.password)
+    if user_id:
+        token = secrets.token_urlsafe(32)
+        _sessions[token] = user_id
+        print(f"[AUTH] New user registered: {request.username} (ID: {user_id})")
+        return {"success": True, "token": token, "user_id": user_id}
+    return {"success": False, "error": "Username or email already exists"}
+
+
+@app.post("/api/auth/login", tags=["Authentication"])
+async def login(request: LoginRequest):
+    """Login user"""
+    auth = UserAuth()
+    user = auth.login(request.username, request.password)
+    if user:
+        token = secrets.token_urlsafe(32)
+        _sessions[token] = user['id']
+        print(f"[AUTH] User logged in: {user['username']} (ID: {user['id']})")
+        return {
+            "success": True,
+            "token": token,
+            "user_id": user['id'],
+            "username": user['username'],
+            "alert_email": user.get('alert_email')
+        }
+    return {"success": False, "error": "Invalid credentials"}
+
+
+@app.post("/api/auth/logout", tags=["Authentication"])
+async def logout(token: str):
+    """Logout user"""
+    if token in _sessions:
+        del _sessions[token]
+    return {"success": True}
+
+
+# ==================== Alert Email Management Endpoints ====================
+
+@app.get("/api/user/alert-emails", tags=["User"])
+async def get_alert_emails(token: str):
+    """Get all alert emails for the user"""
+    if token not in _sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user_id = _sessions[token]
+    
+    with sqlite3.connect("data/monitor.db") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT alert_email FROM users WHERE id = ?", (user_id,))
+        row = cursor.fetchone()
+        alert_emails = row[0].split(',') if row and row[0] else []
+    
+    return {"alert_emails": alert_emails}
+
+
+@app.post("/api/user/alert-emails", tags=["User"])
+async def add_alert_email(token: str, email: EmailStr):
+    """Add an alert email for the user"""
+    if token not in _sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user_id = _sessions[token]
+    
+    # Get current alert emails
+    with sqlite3.connect("data/monitor.db") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT alert_email FROM users WHERE id = ?", (user_id,))
+        row = cursor.fetchone()
+        current_emails = row[0].split(',') if row and row[0] else []
+    
+    # Add new email if not already present
+    if email not in current_emails:
+        current_emails.append(email)
+        new_alert_emails = ','.join(current_emails)
+        
+        with sqlite3.connect("data/monitor.db") as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET alert_email = ? WHERE id = ?",
+                (new_alert_emails, user_id)
+            )
+        
+        print(f"[ALERT] Added alert email {email} for user {user_id}")
+        return {"success": True, "message": f"Email {email} added", "alert_emails": current_emails}
+    
+    return {"success": False, "message": "Email already exists", "alert_emails": current_emails}
+
+
+@app.delete("/api/user/alert-emails", tags=["User"])
+async def remove_alert_email(token: str, email: EmailStr):
+    """Remove an alert email for the user"""
+    if token not in _sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user_id = _sessions[token]
+    
+    # Get current alert emails
+    with sqlite3.connect("data/monitor.db") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT alert_email FROM users WHERE id = ?", (user_id,))
+        row = cursor.fetchone()
+        current_emails = row[0].split(',') if row and row[0] else []
+    
+    # Remove email if present
+    if email in current_emails:
+        current_emails.remove(email)
+        new_alert_emails = ','.join(current_emails) if current_emails else None
+        
+        with sqlite3.connect("data/monitor.db") as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET alert_email = ? WHERE id = ?",
+                (new_alert_emails, user_id)
+            )
+        
+        print(f"[ALERT] Removed alert email {email} for user {user_id}")
+        return {"success": True, "message": f"Email {email} removed", "alert_emails": current_emails}
+    
+    return {"success": False, "message": "Email not found", "alert_emails": current_emails}
+
+
+@app.post("/api/user/alert-emails/test", tags=["User"])
+async def test_alert_email(token: str):
+    """Send a test alert to the user's configured emails"""
+    if token not in _sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user_id = _sessions[token]
+    
+    # Get user's alert emails
+    with sqlite3.connect("data/monitor.db") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT alert_email FROM users WHERE id = ?", (user_id,))
+        row = cursor.fetchone()
+        alert_emails = row[0].split(',') if row and row[0] else []
+    
+    if not alert_emails:
+        raise HTTPException(status_code=400, detail="No alert emails configured")
+    
+    # Create alert service with user's emails
+    alert_service = AlertService(to_addrs=alert_emails)
+    
+    if alert_service.send_test_alert():
+        print(f"[ALERT] Test alert sent to user {user_id} at {', '.join(alert_emails)}")
+        return {"success": True, "message": f"Test alert sent to {', '.join(alert_emails)}"}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to send test alert. Check SMTP configuration.")
+
+
+# ==================== User Device Endpoints ====================
+
+@app.get("/api/user/devices", tags=["User"])
+async def get_user_devices(token: str):
+    """Get devices for logged in user with live status from monitoring engine"""
+    if token not in _sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    auth = UserAuth()
+    user_id = _sessions[token]
+    user_devices = auth.get_user_devices(user_id)
+    
+    engine = get_engine_for_user(user_id)
+    
+    result = []
+    for device_data in user_devices:
+        device_id = device_data['device_id']
+        device_group = device_data.get('device_group', 'Default')
+        
+        if device_id in engine.devices:
+            device = engine.devices[device_id]
+            # Update the device's group from database
+            device.device_group = device_group
+            result.append(_device_to_response(device))
+        else:
+            print(f"[API] Creating device {device_data['name']} in monitoring engine")
+            new_device = Device(
+                device_id=device_id,
+                name=device_data['name'],
+                ip_address=device_data['ip_address'],
+                retry_count=device_data.get('retry_count', 2),
+                timeout=2,
+                max_latency_ms=device_data.get('max_latency_ms', 200.0),
+                packet_loss_threshold=device_data.get('packet_loss_threshold', 10.0)
+            )
+            # Set the group attribute
+            new_device.device_group = device_group
+            engine.devices[device_id] = new_device
+            result.append(_device_to_response(new_device))
+    
+    return result
+
+
+@app.post("/api/user/devices", tags=["User"])
+async def add_user_device(token: str, name: str, ip: str, group: str = "Default"):
+    """Add device for user"""
+    if token not in _sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    auth = UserAuth()
+    user_id = _sessions[token]
+    
+    device_id = auth.add_user_device(user_id, name, ip, group)
+    if device_id:
+        engine = get_engine_for_user(user_id)
+        new_device = Device(
+            device_id=device_id,
+            name=name,
+            ip_address=ip,
+            retry_count=2,
+            max_latency_ms=200.0,
+            packet_loss_threshold=10.0
+        )
+        new_device.device_group = group
+        engine.devices[device_id] = new_device
+        return {"success": True, "device_id": device_id}
+    return {"success": False, "error": "Device already exists"}
+
+
+@app.put("/api/user/devices/{device_id}", tags=["User"])
+async def update_user_device(token: str, device_id: str, name: str = None, ip: str = None, group: str = None):
+    """Update user device"""
+    if token not in _sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    auth = UserAuth()
+    user_id = _sessions[token]
+    
+    if auth.update_user_device(user_id, device_id, name, ip, group):
+        # Also update in monitoring engine
+        engine = get_engine_for_user(user_id)
+        if device_id in engine.devices:
+            device = engine.devices[device_id]
+            if name:
+                device.name = name
+            if ip:
+                device.ip_address = ip
+            if group:
+                device.device_group = group
+        return {"success": True, "message": "Device updated successfully"}
+    return {"success": False, "error": "Device not found or update failed"}
+
+
+@app.delete("/api/user/devices/{device_id}", tags=["User"])
+async def delete_user_device(token: str, device_id: str):
+    """Delete user device"""
+    if token not in _sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    auth = UserAuth()
+    user_id = _sessions[token]
+    
+    if auth.delete_user_device(user_id, device_id):
+        # Also remove from monitoring engine
+        engine = get_engine_for_user(user_id)
+        if device_id in engine.devices:
+            del engine.devices[device_id]
+        return {"success": True, "message": "Device deleted successfully"}
+    return {"success": False, "error": "Device not found"}
+
+
+# ==================== Monitoring Control Endpoints ====================
+
+@app.post("/api/monitoring/start", response_model=MonitoringStatus, tags=["Monitoring Control"])
+async def start_monitoring(token: str, interval: int = 30):
+    """Start the background monitoring service for the user"""
+    global _monitoring_active, _monitoring_threads, _monitoring_intervals
+    
+    if token not in _sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user_id = _sessions[token]
+    
+    if _monitoring_active.get(user_id, False):
+        return MonitoringStatus(
+            running=True,
+            interval=_monitoring_intervals.get(user_id, interval),
+            devices_count=len(get_engine_for_user(user_id).get_devices()),
+            last_check=None
+        )
+    
+    engine = get_engine_for_user(user_id)
+    devices = engine.get_devices()
+    
+    if not devices:
+        raise HTTPException(status_code=400, detail="No devices configured. Please add devices first.")
+    
+    _monitoring_active[user_id] = True
+    _monitoring_intervals[user_id] = interval
+    
+    _monitoring_threads[user_id] = threading.Thread(
+        target=run_monitoring_loop, 
+        args=(user_id, interval), 
+        daemon=True
+    )
+    _monitoring_threads[user_id].start()
+    
+    print(f"[API] Monitoring started for user {user_id} with interval {interval}s")
+    
+    return MonitoringStatus(
+        running=True,
+        interval=interval,
+        devices_count=len(devices),
+        last_check=None
+    )
+
+
+@app.post("/api/monitoring/stop", response_model=MonitoringStatus, tags=["Monitoring Control"])
+async def stop_monitoring(token: str):
+    """Stop the background monitoring service for the user"""
+    global _monitoring_active
+    
+    if token not in _sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user_id = _sessions[token]
+    
+    if user_id in _monitoring_active:
+        _monitoring_active[user_id] = False
+        
+        timeout = 5
+        while _monitoring_threads.get(user_id) and _monitoring_threads[user_id].is_alive() and timeout > 0:
+            time.sleep(0.5)
+            timeout -= 0.5
+        
+        print(f"[API] Monitoring stopped for user {user_id}")
+    
+    return MonitoringStatus(
+        running=False,
+        interval=_monitoring_intervals.get(user_id, 30),
+        devices_count=len(get_engine_for_user(user_id).get_devices()),
+        last_check=None
+    )
+
+
+@app.get("/api/monitoring/status", response_model=MonitoringStatus, tags=["Monitoring Control"])
+async def get_monitoring_status(token: str):
+    """Get current monitoring service status for the user"""
+    if token not in _sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user_id = _sessions[token]
+    
+    engine = get_engine_for_user(user_id)
+    devices = engine.get_devices()
+    
+    return MonitoringStatus(
+        running=_monitoring_active.get(user_id, False),
+        interval=_monitoring_intervals.get(user_id, 30),
+        devices_count=len(devices),
+        last_check=None
+    )
+
+
+# ==================== Device Endpoints ====================
+
+@app.get("/api/devices", response_model=List[DeviceResponse], tags=["Devices"])
+async def get_devices():
+    try:
+        engine = MonitoringEngine()
+        devices = engine.get_devices()
+        return [_device_to_response(d) for d in devices]
+    except Exception as e:
+        print(f"Error in get_devices: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Status Endpoints ====================
+
+@app.get("/api/status", response_model=StatusResponse, tags=["Monitoring"])
+async def get_status():
+    try:
+        engine = MonitoringEngine()
+        devices = engine.get_devices()
+        
+        up = sum(1 for d in devices if d.status == DeviceStatus.UP)
+        degraded = sum(1 for d in devices if d.status == DeviceStatus.DEGRADED)
+        down = sum(1 for d in devices if d.status == DeviceStatus.DOWN)
+        unknown = sum(1 for d in devices if d.status == DeviceStatus.UNKNOWN)
+        
+        return StatusResponse(
+            total_devices=len(devices),
+            devices_up=up,
+            devices_degraded=degraded,
+            devices_down=down,
+            devices_unknown=unknown,
+            last_update=datetime.now().isoformat()
+        )
+    except Exception as e:
+        print(f"Error in get_status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== History Endpoints ====================
+
+@app.get("/api/history/{device_id}", response_model=List[LogResponse], tags=["Monitoring"])
+async def get_device_history(device_id: str, limit: int = 100):
+    try:
+        engine = MonitoringEngine()
+        
+        if device_id not in engine.devices:
+            raise HTTPException(status_code=404, detail=f"Device '{device_id}' not found")
+        
+        logs = engine.get_device_history(device_id, limit=limit)
+        
+        results = []
+        device = engine.devices.get(device_id)
+        device_name = device.name if device else device_id
+        
+        for log in logs:
+            quality_score = log.get('quality_score')
+            
+            results.append(LogResponse(
+                id=log.get('id', 0),
+                device_id=device_id,
+                device_name=device_name,
+                timestamp=log.get('timestamp', ''),
+                status=log.get('status', 'UNKNOWN'),
+                latency_ms=log.get('latency_ms'),
+                packet_loss_percent=log.get('packet_loss_percent', 0.0),
+                quality_score=quality_score
+            ))
+        
+        return results
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in get_device_history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Main Entry Point ====================
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+@app.post("/api/user/alert-email", tags=["User"])
+async def update_alert_email(
+    token: str = Query(...),
+    alert_email: str = Query(...),
+    db: sqlite3.Connection = Depends(get_db)
+):
+    """Update user's alert email"""
+    # Verify token and get user
+    cursor = db.cursor()
+    cursor.execute("SELECT id FROM users WHERE token = ?", (token,))
+    user_row = cursor.fetchone()
+    
+    if not user_row:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    user_id = user_row[0]
+    
+    # Update alert email
+    cursor.execute(
+        "UPDATE users SET alert_email = ? WHERE id = ?",
+        (alert_email, user_id)
+    )
+    db.commit()
+    
+    return {"success": True, "message": "Alert email updated successfully"}
+
+@app.delete("/api/user/alert-email", tags=["User"])
+async def remove_alert_email(
+    token: str = Query(...),
+    alert_email: str = Query(...),
+    db: sqlite3.Connection = Depends(get_db)
+):
+    """Remove alert email from user"""
+    # Verify token and get user
+    cursor = db.cursor()
+    cursor.execute("SELECT id FROM users WHERE token = ?", (token,))
+    user_row = cursor.fetchone()
+    
+    if not user_row:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    # Clear alert email if it matches
+    cursor.execute(
+        "UPDATE users SET alert_email = NULL WHERE id = ? AND alert_email = ?",
+        (user_row[0], alert_email)
+    )
+    db.commit()
+    
+    return {"success": True, "message": "Alert email removed successfully"}

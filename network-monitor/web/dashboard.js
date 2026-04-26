@@ -6,44 +6,15 @@ let token = null;
 let user = null;
 let editingDeviceId = null;
 let refreshInterval = null;
-let currentFilter = 'all';
 
 // ==================== Helper Functions ====================
 
-// Helper for authenticated requests (token in URL)
-async function authFetch(endpoint, options = {}) {
-    if (!token) {
-        window.location.href = 'login.html';
-        throw new Error('No token');
-    }
-    
-    // Ensure endpoint starts correctly
-    let urlEndpoint = endpoint;
-    if (!endpoint.startsWith('/api/') && !endpoint.startsWith('api/')) {
-        urlEndpoint = `/api/${endpoint}`;
-    }
-    
-    const separator = urlEndpoint.includes('?') ? '&' : '?';
-    const url = `${API_URL}${urlEndpoint}${separator}token=${token}`;
-    
-    console.log('Fetching URL:', url);
-    
-    const response = await fetch(url, {
-        ...options,
-        headers: {
-            'Content-Type': 'application/json',
-            ...options.headers
-        }
-    });
-    
-    if (response.status === 401) {
-        localStorage.removeItem('netpulse_token');
-        localStorage.removeItem('netpulse_user');
-        window.location.href = 'login.html';
-        throw new Error('Token expired');
-    }
-    
-    return response;
+function escapeHtml(str) { 
+    if (!str) return '';
+    return str.replace(/[&<>]/g, function(m) { 
+        const escapes = {'&':'&amp;','<':'&lt;','>':'&gt;'};
+        return escapes[m];
+    }); 
 }
 
 // ==================== Authentication ====================
@@ -59,14 +30,12 @@ function checkAuth() {
     
     try {
         user = JSON.parse(userStr);
-        const alertEmailInput = document.getElementById('alert-email');
-        if (alertEmailInput && user.alert_email) {
-            alertEmailInput.value = user.alert_email;
-        }
         const usernameSpan = document.getElementById('username-display');
         if (usernameSpan && user.username) {
             usernameSpan.textContent = user.username;
         }
+        // Load and display the saved alert email
+        loadAndDisplayAlertEmail();
     } catch (e) {
         console.error('Error parsing user data:', e);
         window.location.href = 'login.html';
@@ -88,135 +57,54 @@ async function logout() {
 
 // ==================== Alert Email Management ====================
 
-async function loadAlertEmails() {
+async function loadAndDisplayAlertEmail() {
     if (!token) return;
     
     try {
-        const response = await fetch(`${API_URL}/user/alert-emails?token=${token}`);
-        const data = await response.json();
-        displayAlertEmails(data.alert_emails);
-    } catch (error) {
-        console.error('Error loading alert emails:', error);
-        const container = document.getElementById('alert-emails-list');
-        if (container) {
-            container.innerHTML = '<div class="error-msg">Failed to load alert emails</div>';
-        }
-    }
-}
-
-function displayAlertEmails(emails) {
-    const container = document.getElementById('alert-emails-list');
-    if (!container) return;
-    
-    if (!emails || emails.length === 0) {
-        container.innerHTML = '<div style="color: #6b7280; padding: 10px;">No alert emails configured. Add one above to receive notifications.</div>';
-        return;
-    }
-    
-    let html = '<div style="display: flex; flex-wrap: wrap; gap: 10px;">';
-    for (const email of emails) {
-        html += `
-            <div style="display: inline-flex; align-items: center; gap: 8px; background: #f3f4f6; padding: 6px 12px; border-radius: 20px;">
-                <span style="color: #1f2937;">${escapeHtml(email)}</span>
-                <button onclick="removeAlertEmail('${escapeHtml(email)}')" style="background: none; border: none; cursor: pointer; color: #ef4444; font-size: 16px; padding: 0 4px;" title="Remove">×</button>
-            </div>
-        `;
-    }
-    html += '</div>';
-    container.innerHTML = html;
-}
-
-async function addAlertEmail() {
-    const emailInput = document.getElementById('new-alert-email');
-    const email = emailInput ? emailInput.value.trim() : '';
-    
-    if (!email) {
-        alert('Please enter an email address');
-        return;
-    }
-    
-    if (!token) {
-        alert('Please login again');
-        window.location.href = 'login.html';
-        return;
-    }
-    
-    try {
-        const response = await fetch(`${API_URL}/user/alert-emails?token=${token}&email=${encodeURIComponent(email)}`, {
-            method: 'POST'
+        const response = await fetch(`${API_URL}/user/alert-email?token=${token}&alert_email=test`, {
+            method: 'GET'
         });
-        const data = await response.json();
-        
-        if (data.success) {
-            alert(`✅ ${data.message}`);
-            if (emailInput) emailInput.value = '';
-            loadAlertEmails();
+        // Since GET might not work, let's use the stored user data
+        if (user && user.alert_email) {
+            document.getElementById('alert-email').value = user.alert_email;
+            document.getElementById('current-alert-email').textContent = user.alert_email;
+            document.getElementById('current-email-display').style.display = 'block';
         } else {
-            alert(`❌ ${data.message}`);
+            // Try to get from database directly via the alert-emails endpoint
+            const emailsResp = await fetch(`${API_URL}/user/alert-emails?token=${token}`);
+            const emailsData = await emailsResp.json();
+            if (emailsData.alert_emails && emailsData.alert_emails.length > 0) {
+                const savedEmail = emailsData.alert_emails[0];
+                document.getElementById('alert-email').value = savedEmail;
+                document.getElementById('current-alert-email').textContent = savedEmail;
+                document.getElementById('current-email-display').style.display = 'block';
+                // Update user object
+                user.alert_email = savedEmail;
+                localStorage.setItem('netpulse_user', JSON.stringify(user));
+            }
         }
     } catch (error) {
-        console.error('Error adding alert email:', error);
-        alert('Error adding alert email');
+        console.error('Error loading alert email:', error);
     }
 }
-
-async function removeAlertEmail(email) {
-    if (!confirm(`Remove ${email} from alert notifications?`)) return;
-    
-    if (!token) {
-        alert('Please login again');
-        window.location.href = 'login.html';
-        return;
-    }
-    
-    try {
-        const response = await fetch(`${API_URL}/user/alert-emails?token=${token}&email=${encodeURIComponent(email)}`, {
-            method: 'DELETE'
-        });
-        const data = await response.json();
-        
-        if (data.success) {
-            alert(`✅ ${data.message}`);
-            loadAlertEmails();
-        } else {
-            alert(`❌ ${data.message}`);
-        }
-    } catch (error) {
-        console.error('Error removing alert email:', error);
-        alert('Error removing alert email');
-    }
-}
-
-async function testAlertEmails() {
-    if (!token) {
-        alert('Please login again');
-        window.location.href = 'login.html';
-        return;
-    }
-    
-    try {
-        const response = await fetch(`${API_URL}/user/alert-emails/test?token=${token}`, {
-            method: 'POST'
-        });
-        const data = await response.json();
-        
-        if (data.success) {
-            alert(`✅ ${data.message}`);
-        } else {
-            alert(`❌ Failed to send test alert`);
-        }
-    } catch (error) {
-        console.error('Error sending test alert:', error);
-        alert('Error sending test alert. Check SMTP configuration.');
-    }
-}
-
-// ==================== Alert Email (Legacy) ====================
 
 async function saveAlertEmail() {
-    const alertEmail = document.getElementById('alert-email').value;
+    const alertEmail = document.getElementById('alert-email').value.trim();
     if (!alertEmail) {
         alert('Please enter an email address');
+        return;
+    }
+    
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(alertEmail)) {
+        alert('Please enter a valid email address');
+        return;
+    }
+    
+    if (!token) {
+        alert('Please login again');
+        window.location.href = 'login.html';
         return;
     }
     
@@ -225,18 +113,55 @@ async function saveAlertEmail() {
             method: 'POST'
         });
         const data = await response.json();
+        
         if (data.success) {
             user.alert_email = alertEmail;
             localStorage.setItem('netpulse_user', JSON.stringify(user));
-            alert('✅ Alert email saved!');
-            // Reload the alert emails list
-            loadAlertEmails();
+            document.getElementById('current-alert-email').textContent = alertEmail;
+            document.getElementById('current-email-display').style.display = 'block';
+            alert('Alert email saved successfully');
         } else {
-            alert('Failed to save alert email');
+            alert('Failed to save alert email: ' + (data.message || data.error || 'Unknown error'));
         }
     } catch (error) {
         console.error('Error saving alert email:', error);
         alert('Error saving alert email');
+    }
+}
+
+async function removeAlertEmail() {
+    const currentEmail = document.getElementById('alert-email').value.trim();
+    if (!currentEmail) {
+        alert('No email to remove');
+        return;
+    }
+    
+    if (!confirm(`Remove ${currentEmail} from alert notifications?`)) return;
+    
+    if (!token) {
+        alert('Please login again');
+        window.location.href = 'login.html';
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_URL}/user/alert-email?token=${token}&alert_email=${encodeURIComponent(currentEmail)}`, {
+            method: 'DELETE'
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+            user.alert_email = null;
+            localStorage.setItem('netpulse_user', JSON.stringify(user));
+            document.getElementById('alert-email').value = '';
+            document.getElementById('current-email-display').style.display = 'none';
+            alert('Alert email removed successfully');
+        } else {
+            alert('Failed to remove alert email: ' + (data.message || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error removing alert email:', error);
+        alert('Error removing alert email');
     }
 }
 
@@ -252,28 +177,17 @@ async function startMonitoring() {
         return;
     }
     
-    console.log('Starting monitoring with interval:', interval);
-    
     try {
         const response = await fetch(`${API_URL}/monitoring/start?token=${token}&interval=${interval}`, { 
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            }
+            headers: { 'Content-Type': 'application/json' }
         });
         
-        console.log('Start response status:', response.status);
-        
         if (response.ok) {
-            const data = await response.json();
-            console.log('Start response:', data);
-            alert('✅ Monitoring started!');
+            alert('Monitoring started successfully');
             updateMonitoringStatus();
-            if (refreshInterval) clearInterval(refreshInterval);
-            refreshInterval = setInterval(() => { loadDevices(); }, 3000);
         } else {
             const error = await response.json();
-            console.error('Start failed:', error);
             alert('Failed to start monitoring: ' + (error.detail || 'Unknown error'));
         }
     } catch (error) {
@@ -289,20 +203,14 @@ async function stopMonitoring() {
         return;
     }
     
-    console.log('Stopping monitoring...');
-    
     try {
         const response = await fetch(`${API_URL}/monitoring/stop?token=${token}`, { 
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            }
+            headers: { 'Content-Type': 'application/json' }
         });
         
-        console.log('Stop response status:', response.status);
-        
         if (response.ok) {
-            alert('⏹️ Monitoring stopped!');
+            alert('Monitoring stopped');
             updateMonitoringStatus();
         } else {
             const error = await response.json();
@@ -319,21 +227,17 @@ async function updateMonitoringStatus() {
     
     try {
         const response = await fetch(`${API_URL}/monitoring/status?token=${token}`);
-        if (!response.ok) {
-            console.error('Status response not OK:', response.status);
-            return;
-        }
-        const status = await response.json();
-        console.log('Monitoring status:', status);
+        if (!response.ok) return;
         
+        const status = await response.json();
         const statusPill = document.getElementById('monitor-status-pill');
         if (statusPill) {
             if (status.running) {
                 statusPill.textContent = 'RUNNING';
-                statusPill.className = 'status-pill status-running';
+                statusPill.className = 'status-pill status-active';
             } else {
                 statusPill.textContent = 'STOPPED';
-                statusPill.className = 'status-pill status-stopped';
+                statusPill.className = 'status-pill status-inactive';
             }
         }
     } catch (error) {
@@ -356,7 +260,6 @@ async function loadDevices() {
         }
         
         const devices = await response.json();
-        console.log('Loaded devices:', devices);
         displayDevices(devices);
         updateStats(devices);
     } catch (error) {
@@ -369,17 +272,15 @@ async function loadDevices() {
 }
 
 function updateStats(devices) {
-    let up = 0, degraded = 0, down = 0, unknown = 0;
+    let up = 0, degraded = 0, down = 0;
     for (const d of devices) {
         const status = (d.status || 'UNKNOWN').toUpperCase();
         if (status === 'UP') up++;
         else if (status === 'DEGRADED') degraded++;
         else if (status === 'DOWN') down++;
-        else unknown++;
     }
     
-    const total = devices.length;
-    document.getElementById('total-devices').textContent = total;
+    document.getElementById('total-devices').textContent = devices.length;
     document.getElementById('up-count').textContent = up;
     document.getElementById('degraded-count').textContent = degraded;
     document.getElementById('down-count').textContent = down;
@@ -414,86 +315,42 @@ function displayDevices(devices) {
         return;
     }
     
-    const groupColors = { 
-        MTN: '#ff9800', 
-        Airtel: '#e91e63', 
-        Glo: '#4caf50', 
-        '9mobile': '#2196f3', 
-        Gateway: '#9c27b0', 
-        DNS: '#00bcd4',
-        Default: '#6b7280'
-    };
-    
     let html = `<table><thead><tr>
         <th>Group</th>
         <th>Name</th>
         <th>IP</th>
         <th>Status</th>
-        <th>Quality</th>
         <th>Latency</th>
-        <th>Jitter</th>
         <th>Last Check</th>
-        <th>Downtime</th>
         <th>Actions</th>
     </tr></thead><tbody>`;
     
     for (const d of filtered) {
         const group = d.group || 'Default';
         const ip = d.ip || 'N/A';
-        const groupColor = groupColors[group] || '#6b7280';
         const statusText = d.status || 'UNKNOWN';
         const statusClass = `status-${statusText.toLowerCase()}`;
         const latency = d.latency_ms ? `${d.latency_ms.toFixed(1)}ms` : 'N/A';
-        const jitter = d.jitter_ms ? `${d.jitter_ms.toFixed(1)}ms` : 'N/A';
         const lastCheck = d.last_check ? new Date(d.last_check).toLocaleTimeString() : 'Never';
-        const downtime = d.downtime_display || '-';
-        
-        let qualityHtml = '';
-        if (d.quality_score) {
-            const score = d.quality_score;
-            let qualityColor = '#10b981';
-            let qualityBg = '#d1fae5';
-            if (score < 70) {
-                qualityColor = '#f59e0b';
-                qualityBg = '#fed7aa';
-            }
-            if (score < 40) {
-                qualityColor = '#ef4444';
-                qualityBg = '#fee2e2';
-            }
-            qualityHtml = `<span style="display: inline-block; padding: 4px 8px; border-radius: 20px; background: ${qualityBg}; color: ${qualityColor}; font-weight: bold; font-size: 12px;">${score}%</span>`;
-        } else {
-            qualityHtml = '<span style="color: #6b7280; font-size: 12px;">N/A</span>';
-        }
+        const deviceId = d.id;
         
         html += `<tr>
-            <td><span class="group-badge" style="background: ${groupColor}; color: white;">${escapeHtml(group)}</span></td>
+            <td><span class="group-badge">${escapeHtml(group)}</span></td>
             <td><strong>${escapeHtml(d.name)}</strong></td>
-            <td>${escapeHtml(ip)}</div></td>
-            <td><span class="status-badge-sm ${statusClass}">${escapeHtml(statusText)}</span></div></td>
-            <td>${qualityHtml}</div></td>
-            <td>${latency}</div></td>
-            <td>${jitter}</div></td>
-            <td>${lastCheck}</div></td>
-            <td>${downtime}</div></td>
+            <td>${escapeHtml(ip)}</td>
+            <td><span class="status-badge-sm ${statusClass}">${escapeHtml(statusText)}</span></td>
+            <td>${latency}</td>
+            <td>${lastCheck}</td>
             <td>
-                <button class="action-btn edit-btn" onclick="openEditModal('${d.id}', '${escapeHtml(d.name)}', '${escapeHtml(ip)}', '${escapeHtml(group)}')">Edit</button>
-                <button class="action-btn delete-btn" onclick="deleteDevice('${d.id}')">Delete</button>
-            </div>
+                <button class="action-btn edit-btn" onclick="openEditModal('${deviceId}', '${escapeHtml(d.name)}', '${escapeHtml(ip)}', '${escapeHtml(group)}')">Edit</button>
+                <button class="action-btn delete-btn" onclick="deleteDevice('${deviceId}')">Delete</button>
+            </td>
         </tr>`;
     }
     html += `</tbody></table>`;
     
     const tableDiv = document.getElementById('devices-table');
     if (tableDiv) tableDiv.innerHTML = html;
-}
-
-function escapeHtml(str) { 
-    if (!str) return '';
-    return str.replace(/[&<>]/g, function(m) { 
-        const escapes = {'&':'&amp;','<':'&lt;','>':'&gt;'};
-        return escapes[m];
-    }); 
 }
 
 // ==================== Modal Operations ====================
@@ -539,29 +396,22 @@ async function saveDevice() {
     
     try {
         let response;
-        let url;
         
         if (editingDeviceId) {
-            url = `${API_URL}/user/devices/${editingDeviceId}?token=${token}&name=${encodeURIComponent(name)}&ip=${encodeURIComponent(ip)}&group=${encodeURIComponent(group)}`;
-            console.log('PUT Request URL:', url);
-            response = await fetch(url, { method: 'PUT' });
+            response = await fetch(`${API_URL}/user/devices/${editingDeviceId}?token=${token}&name=${encodeURIComponent(name)}&ip=${encodeURIComponent(ip)}&group=${encodeURIComponent(group)}`, { 
+                method: 'PUT' 
+            });
         } else {
-            url = `${API_URL}/user/devices?token=${token}&name=${encodeURIComponent(name)}&ip=${encodeURIComponent(ip)}&group=${encodeURIComponent(group)}`;
-            console.log('POST Request URL:', url);
-            response = await fetch(url, { method: 'POST' });
+            response = await fetch(`${API_URL}/user/devices?token=${token}&name=${encodeURIComponent(name)}&ip=${encodeURIComponent(ip)}&group=${encodeURIComponent(group)}`, { 
+                method: 'POST' 
+            });
         }
         
-        console.log('Response status:', response.status);
-        
         if (response.ok) {
-            const data = await response.json();
-            console.log('Response data:', data);
-            alert(editingDeviceId ? '✅ Device updated!' : '✅ Device added!');
+            alert(editingDeviceId ? 'Device updated successfully' : 'Device added successfully');
             closeModal();
             loadDevices();
         } else {
-            const error = await response.json();
-            console.error('API error:', error);
             alert(editingDeviceId ? 'Failed to update device' : 'Failed to add device');
         }
     } catch (error) {
@@ -580,20 +430,12 @@ async function deleteDevice(id) {
     }
     
     try {
-        const url = `${API_URL}/user/devices/${id}?token=${token}`;
-        console.log('DELETE Request URL:', url);
-        const response = await fetch(url, { method: 'DELETE' });
-        
-        console.log('Response status:', response.status);
+        const response = await fetch(`${API_URL}/user/devices/${id}?token=${token}`, { method: 'DELETE' });
         
         if (response.ok) {
-            const data = await response.json();
-            console.log('Response data:', data);
-            alert('✅ Device deleted!');
+            alert('Device deleted successfully');
             loadDevices();
         } else {
-            const error = await response.json();
-            console.error('API error:', error);
             alert('Failed to delete device');
         }
     } catch (error) {
@@ -606,17 +448,16 @@ async function deleteDevice(id) {
 
 function setupIntervalPresets() {
     const presetBtns = document.querySelectorAll('.preset-btn');
-    if (presetBtns.length > 0) {
-        presetBtns.forEach(btn => {
-            btn.addEventListener('click', function() {
-                const interval = this.dataset.interval;
-                const intervalInput = document.getElementById('interval-input');
-                if (intervalInput) intervalInput.value = interval;
-                presetBtns.forEach(b => b.classList.remove('active'));
-                this.classList.add('active');
-            });
+    const intervalInput = document.getElementById('interval-input');
+    
+    presetBtns.forEach(btn => {
+        btn.addEventListener('click', function() {
+            const interval = this.dataset.interval;
+            if (intervalInput) intervalInput.value = interval;
+            presetBtns.forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
         });
-    }
+    });
 }
 
 // ==================== Auto Refresh ====================
@@ -632,12 +473,12 @@ function startAutoRefresh() {
 // ==================== Initialization ====================
 
 function init() {
+    loadAndDisplayAlertEmail();
     if (checkAuth()) {
         loadDevices();
         updateMonitoringStatus();
         startAutoRefresh();
         setupIntervalPresets();
-        loadAlertEmails();  // Load alert emails on init
     }
 }
 
@@ -651,3 +492,119 @@ window.onclick = function(e) {
 
 // Start everything when page loads
 document.addEventListener('DOMContentLoaded', init);
+
+// Function to load and display the saved alert email from database
+async function loadAndDisplayAlertEmail() {
+    if (!token) return;
+    
+    try {
+        // First try to get from the alert-emails endpoint
+        const response = await fetch(`${API_URL}/user/alert-emails?token=${token}`);
+        const data = await response.json();
+        
+        console.log('Alert emails response:', data);
+        
+        if (data.alert_emails && data.alert_emails.length > 0) {
+            const savedEmail = data.alert_emails[0];
+            document.getElementById('alert-email').value = savedEmail;
+            document.getElementById('current-alert-email').textContent = savedEmail;
+            document.getElementById('current-email-display').style.display = 'block';
+            
+            // Update user object
+            user.alert_email = savedEmail;
+            localStorage.setItem('netpulse_user', JSON.stringify(user));
+        } else {
+            // No email saved
+            document.getElementById('alert-email').value = '';
+            document.getElementById('current-email-display').style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Error loading alert email:', error);
+        // Fallback: try to get from user object
+        if (user && user.alert_email) {
+            document.getElementById('alert-email').value = user.alert_email;
+            document.getElementById('current-alert-email').textContent = user.alert_email;
+            document.getElementById('current-email-display').style.display = 'block';
+        }
+    }
+}
+
+// Override the saveAlertEmail function to reload the display
+const originalSaveAlertEmail = saveAlertEmail;
+saveAlertEmail = async function() {
+    const alertEmail = document.getElementById('alert-email').value.trim();
+    if (!alertEmail) {
+        alert('Please enter an email address');
+        return;
+    }
+    
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(alertEmail)) {
+        alert('Please enter a valid email address');
+        return;
+    }
+    
+    if (!token) {
+        alert('Please login again');
+        window.location.href = 'login.html';
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_URL}/user/alert-email?token=${token}&alert_email=${encodeURIComponent(alertEmail)}`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+            user.alert_email = alertEmail;
+            localStorage.setItem('netpulse_user', JSON.stringify(user));
+            alert('Alert email saved successfully');
+            // Reload the display
+            await loadAndDisplayAlertEmail();
+        } else {
+            alert('Failed to save alert email: ' + (data.message || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error saving alert email:', error);
+        alert('Error saving alert email');
+    }
+};
+
+// Override the removeAlertEmail function
+const originalRemoveAlertEmail = removeAlertEmail;
+removeAlertEmail = async function() {
+    const currentEmail = document.getElementById('alert-email').value.trim();
+    if (!currentEmail) {
+        alert('No email to remove');
+        return;
+    }
+    
+    if (!confirm(`Remove ${currentEmail} from alert notifications?`)) return;
+    
+    if (!token) {
+        alert('Please login again');
+        window.location.href = 'login.html';
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_URL}/user/alert-email?token=${token}&alert_email=${encodeURIComponent(currentEmail)}`, {
+            method: 'DELETE'
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+            user.alert_email = null;
+            localStorage.setItem('netpulse_user', JSON.stringify(user));
+            alert('Alert email removed successfully');
+            // Reload the display
+            await loadAndDisplayAlertEmail();
+        } else {
+            alert('Failed to remove alert email: ' + (data.message || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error removing alert email:', error);
+        alert('Error removing alert email');
+    }
+};

@@ -6,6 +6,10 @@ Sends notifications for DOWN, DEGRADED, RECOVERY, and SUBOPTIMAL events
 
 import smtplib
 import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 import time
 import sqlite3
 from email.mime.text import MIMEText
@@ -281,7 +285,7 @@ class AlertService:
         self._last_known_status[device_id] = new_status
         return True
     
-    def _determine_alert_subject_OLD(self, alert_type: str, device_name: str, 
+    def _determine_alert_subject(self, alert_type: str, device_name: str, 
                                   metrics: Dict, downtime_str: str = "") -> str:
         """Generate appropriate subject line based on alert type and severity"""
         prefix = "[NetPulse]"

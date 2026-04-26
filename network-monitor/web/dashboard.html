@@ -15,16 +15,14 @@
             </div>
             <nav class="nav-links" aria-label="Dashboard navigation">
                 <a href="dashboard.html" class="active">Dashboard</a>
-                <a href="#topology">Topology</a>
+                <a href="#devices">Devices</a>
                 <a href="#alerts">Alerts</a>
-                <a href="#settings">Settings</a>
             </nav>
         </div>
 
         <div class="navbar-actions">
             <div class="user-summary">
                 <span id="username-display"></span>
-                <span id="email-display"></span>
                 <button class="logout-btn" onclick="logout()">Logout</button>
             </div>
         </div>
@@ -35,7 +33,7 @@
             <div class="hero-copy">
                 <div class="dashboard-badge">LIVE MONITORING</div>
                 <h1>Network Health Dashboard</h1>
-                <p>Real-time monitoring with 5-60 second intervals</p>
+                <p>Real-time monitoring with configurable intervals</p>
             </div>
         </section>
 
@@ -53,7 +51,7 @@
             <article class="dashboard-card">
                 <div class="card-title">DEGRADED</div>
                 <div class="card-value card-warn" id="degraded-count">0</div>
-                <div class="card-note">Slow/Unstable</div>
+                <div class="card-note">Performance Issues</div>
             </article>
             <article class="dashboard-card">
                 <div class="card-title">DOWN</div>
@@ -63,89 +61,69 @@
         </section>
 
         <section class="control-grid">
-            <article class="info-card control-card">
+            <article class="info-card">
                 <div class="info-card-header">
                     <div>
                         <h2>Control Center</h2>
-                        <p>Start/stop monitoring and adjust check interval.</p>
+                        <p>Start/stop monitoring and adjust check intervals</p>
                     </div>
                     <div class="status-pill status-inactive" id="monitor-status-pill">STOPPED</div>
                 </div>
                 <div class="control-body">
                     <div class="control-item">
-                        <label>CHECK INTERVAL (seconds)</label>
+                        <label>Check Interval (seconds)</label>
                         <div class="interval-presets">
-                            <button type="button" class="preset-btn" data-interval="5">5s (Fast)</button>
+                            <button type="button" class="preset-btn" data-interval="5">5s</button>
                             <button type="button" class="preset-btn" data-interval="10">10s</button>
-                            <button type="button" class="preset-btn" data-interval="15">15s</button>
-                            <button type="button" class="preset-btn" data-interval="30" class="active">30s (Default)</button>
+                            <button type="button" class="preset-btn" data-interval="30" class="active">30s</button>
                             <button type="button" class="preset-btn" data-interval="60">60s</button>
                         </div>
-                        <input type="number" id="interval-input" class="select-input" value="30" min="5" max="300" step="5" style="margin-top: 10px;">
+                        <input type="number" id="interval-input" class="select-input" value="30" min="5" max="300" step="5">
                     </div>
                     <div class="control-actions">
-                        <button class="btn-start" onclick="startMonitoring()">▶ Start Monitoring</button>
-                        <button class="btn-stop" onclick="stopMonitoring()">⏹ Stop Monitoring</button>
+                        <button class="btn-start" onclick="startMonitoring()">Start Monitoring</button>
+                        <button class="btn-stop" onclick="stopMonitoring()">Stop Monitoring</button>
                     </div>
                 </div>
             </article>
 
-            <!-- Alert Email Management Section -->
-            <article class="info-card" style="margin-bottom: 20px;">
+            <article class="info-card" id="alerts">
                 <div class="info-card-header">
                     <div>
-                        <h2>Alert Email Management</h2>
-                        <p>Add or remove email addresses that will receive alert notifications.</p>
+                        <h2>Alert Configuration</h2>
+                        <p>Email notifications for device status changes</p>
                     </div>
                 </div>
                 <div class="control-body">
                     <div class="control-item">
-                        <label for="new-alert-email">Add New Email Address</label>
-                        <div style="display: flex; gap: 10px; margin-top: 5px;">
-                            <input type="email" id="new-alert-email" class="alert-input" placeholder="admin@example.com" style="flex: 1;">
-                            <button class="btn-save" onclick="addAlertEmail()" style="width: auto;">Add Email</button>
-                        </div>
+                        <label for="alert-email">Alert Email Address</label>
+                        <input type="email" id="alert-email" class="alert-input" placeholder="your-email@example.com">
                     </div>
-                    
-                    <div class="control-item" style="margin-top: 15px;">
-                        <label>Configured Alert Emails</label>
-                        <div id="alert-emails-list" style="margin-top: 10px;">
+                    <div class="control-item">
+                        <label>Additional Alert Emails</label>
+                        <div id="alert-emails-list">
                             <div class="loading">Loading emails...</div>
                         </div>
                     </div>
-                    
-                    <div class="control-actions" style="margin-top: 15px;">
-                        <button class="btn-start" onclick="testAlertEmails()" style="background: #3b82f6;">Send Test Alert</button>
+                    <div class="control-actions">
+                        <button class="btn-save" onclick="saveAlertEmail()">Save Alert Email</button>
+                        <button class="btn-start" onclick="testAlertEmails()" style="background: linear-gradient(135deg, #3b82f6, #2563eb);">Send Test Alert</button>
                     </div>
-                    <small style="display: block; font-size: 11px; color: #6b7280; margin-top: 8px;">
-                        Test alerts will be sent to all configured email addresses to verify your SMTP settings.
-                    </small>
+                    <small class="input-hint">Alerts are sent immediately when a device goes DOWN or becomes DEGRADED</small>
                 </div>
-            </article>
-
-            <article class="info-card alert-card" id="alerts">
-                <div>
-                    <h2>Alert Notifications</h2>
-                    <p>Save the email address that will receive alert notifications when devices go down.</p>
-                </div>
-                <div class="alert-form">
-                    <input type="email" id="alert-email" class="alert-input" placeholder="your-email@example.com">
-                    <button class="btn-save" onclick="saveAlertEmail()">Save Alert Email</button>
-                </div>
-                <small style="display: block; font-size: 11px; color: #6b7280; margin-top: 8px;">Alerts are sent immediately when a device is detected DOWN</small>
             </article>
         </section>
 
-        <section class="device-section">
+        <section class="device-section" id="devices">
             <div class="section-header">
                 <div>
-                    <h2>Devices Management</h2>
+                    <h2>Devices</h2>
                     <p>Showing <span id="device-count">0</span> devices</p>
                 </div>
                 <div class="search-group">
-                    <input type="text" id="device-search" class="search-input" placeholder="Search devices..." oninput="filterDevices()">
-                    <button class="refresh-btn" onclick="loadDevices()">⟳ Refresh</button>
-                    <button class="add-btn" onclick="openAddModal()">+ Add Device</button>
+                    <input type="text" id="device-search" class="search-input" placeholder="Search by name, IP, or group...">
+                    <button class="refresh-btn" onclick="loadDevices()">Refresh</button>
+                    <button class="add-btn" onclick="openAddModal()">Add Device</button>
                 </div>
             </div>
             <div id="devices-table">
@@ -154,27 +132,27 @@
         </section>
     </main>
 
-    <!-- Add/Edit Modal -->
+    <!-- Device Modal -->
     <div id="modal" class="modal">
         <div class="modal-content">
             <h3 id="modal-title">Add Device</h3>
-            <input type="text" id="device-name" placeholder="Device Name (e.g., Core Router)">
-            <input type="text" id="device-ip" placeholder="IP Address (e.g., 192.168.1.1)">
-            <input type="text" id="device-group" placeholder="Group (e.g., MTN, Airtel, Core)">
+            <input type="text" id="device-name" placeholder="Device Name" autocomplete="off">
+            <input type="text" id="device-ip" placeholder="IP Address" autocomplete="off">
+            <input type="text" id="device-group" placeholder="Group (optional)" autocomplete="off">
             <div class="modal-buttons">
                 <button class="cancel-btn" onclick="closeModal()">Cancel</button>
                 <button class="save-btn" onclick="saveDevice()">Save Device</button>
             </div>
         </div>
     </div>
-    
+
     <script>
         const API_URL = 'http://localhost:8000/api';
         let token = null;
         let user = null;
         let editingDeviceId = null;
-        
-        // Check authentication on load
+        let refreshInterval = null;
+
         function checkAuth() {
             token = localStorage.getItem('netpulse_token');
             const userStr = localStorage.getItem('netpulse_user');
@@ -186,17 +164,13 @@
             
             user = JSON.parse(userStr);
             document.getElementById('username-display').textContent = user.username;
+            
             if (user.alert_email) {
                 document.getElementById('alert-email').value = user.alert_email;
-                const emailDisplay = document.getElementById('email-display');
-                if (emailDisplay) {
-                    emailDisplay.textContent = user.alert_email;
-                }
             }
             return true;
         }
-        
-        // Logout
+
         async function logout() {
             try {
                 await fetch(`${API_URL}/auth/logout?token=${token}`, { method: 'POST' });
@@ -205,11 +179,13 @@
             localStorage.removeItem('netpulse_user');
             window.location.href = 'login.html';
         }
-        
-        // Save alert email
+
         async function saveAlertEmail() {
             const alertEmail = document.getElementById('alert-email').value;
-            if (!alertEmail) return;
+            if (!alertEmail) {
+                alert('Please enter an email address');
+                return;
+            }
             
             try {
                 const response = await fetch(`${API_URL}/user/alert-email?token=${token}&alert_email=${encodeURIComponent(alertEmail)}`, {
@@ -222,60 +198,52 @@
                 }
                 user.alert_email = alertEmail;
                 localStorage.setItem('netpulse_user', JSON.stringify(user));
-                const emailDisplay = document.getElementById('email-display');
-                if (emailDisplay) {
-                    emailDisplay.textContent = alertEmail;
-                }
-                alert('✅ Alert email saved!');
+                alert('Alert email saved successfully');
             } catch (error) {
                 alert('Error saving alert email');
             }
         }
-        
-        // Start monitoring
+
         async function startMonitoring() {
             const interval = document.getElementById('interval-input').value;
             try {
                 const response = await fetch(`${API_URL}/monitoring/start?interval=${interval}`, { method: 'POST' });
                 if (response.ok) {
-                    alert('Monitoring started!');
+                    alert('Monitoring started');
                     updateMonitoringStatus();
                 }
             } catch (error) {
                 alert('Error starting monitoring');
             }
         }
-        
-        // Stop monitoring
+
         async function stopMonitoring() {
             try {
                 const response = await fetch(`${API_URL}/monitoring/stop`, { method: 'POST' });
                 if (response.ok) {
-                    alert('Monitoring stopped!');
+                    alert('Monitoring stopped');
                     updateMonitoringStatus();
                 }
             } catch (error) {
                 alert('Error stopping monitoring');
             }
         }
-        
-        // Update monitoring status display
+
         async function updateMonitoringStatus() {
             try {
                 const response = await fetch(`${API_URL}/monitoring/status`);
                 const status = await response.json();
-                const statusSpan = document.getElementById('monitor-status');
+                const pill = document.getElementById('monitor-status-pill');
                 if (status.running) {
-                    statusSpan.textContent = 'RUNNING';
-                    statusSpan.className = 'status-badge status-running';
+                    pill.textContent = 'RUNNING';
+                    pill.className = 'status-pill status-active';
                 } else {
-                    statusSpan.textContent = 'STOPPED';
-                    statusSpan.className = 'status-badge status-stopped';
+                    pill.textContent = 'STOPPED';
+                    pill.className = 'status-pill status-inactive';
                 }
             } catch (e) {}
         }
-        
-        // Load devices
+
         async function loadDevices() {
             try {
                 const response = await fetch(`${API_URL}/user/devices?token=${token}`);
@@ -289,67 +257,59 @@
                 document.getElementById('devices-table').innerHTML = `<div class="error-msg">Failed to load devices: ${escapeHtml(error.message)}</div>`;
             }
         }
-        
-        // Update stats
+
         function updateStats(devices) {
             let up = 0, degraded = 0, down = 0;
             for (const d of devices) {
-                if (d.status === 'UP') up++;
-                else if (d.status === 'DEGRADED') degraded++;
-                else if (d.status === 'DOWN') down++;
+                const status = (d.status || 'UNKNOWN').toUpperCase();
+                if (status === 'UP') up++;
+                else if (status === 'DEGRADED') degraded++;
+                else if (status === 'DOWN') down++;
             }
             document.getElementById('total-devices').textContent = devices.length;
             document.getElementById('up-count').textContent = up;
             document.getElementById('degraded-count').textContent = degraded;
             document.getElementById('down-count').textContent = down;
         }
-        
-        // Filter devices by search query
-        function filterDevices() {
-            loadDevices();
-        }
-        
-        // Display devices
+
         function displayDevices(devices) {
-            const query = document.getElementById('device-search')?.value.trim().toLowerCase();
+            const searchInput = document.getElementById('device-search');
+            const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
+            
             let filtered = devices;
             if (query) {
                 filtered = devices.filter(d => {
-                    const name = (d.name || d.device_name || '').toString().toLowerCase();
-                    const ip = (d.ip_address || d.ip || '').toString().toLowerCase();
-                    const group = (d.device_group || 'Default').toString().toLowerCase();
+                    const name = (d.name || '').toLowerCase();
+                    const ip = (d.ip_address || d.ip || '').toLowerCase();
+                    const group = (d.device_group || 'Default').toLowerCase();
                     return name.includes(query) || ip.includes(query) || group.includes(query);
                 });
             }
+            
             document.getElementById('device-count').textContent = filtered.length;
             
             if (filtered.length === 0) {
-                document.getElementById('devices-table').innerHTML = '<div class="loading">No devices in this group. Click "Add Device" to add one.</div>';
+                document.getElementById('devices-table').innerHTML = '<div class="loading">No devices found. Click "Add Device" to get started.</div>';
                 return;
             }
             
-            const groupColors = { MTN: '#ff9800', Airtel: '#e91e63', Glo: '#4caf50', '9mobile': '#2196f3', Gateway: '#9c27b0', DNS: '#00bcd4' };
-            
-            let html = `<table><thead><tr><th>Group</th><th>Name</th><th>IP</th><th>Status</th><th>Latency</th><th>Last Check</th><th>Downtime</th><th>Actions</th></tr></thead><tbody>`;
+            let html = `<table><thead><tr><th>Group</th><th>Name</th><th>IP Address</th><th>Status</th><th>Latency</th><th>Last Check</th><th>Actions</th></tr></thead><tbody>`;
             
             for (const d of filtered) {
                 const group = d.device_group || 'Default';
                 const ip = d.ip_address || d.ip || 'N/A';
-                const groupColor = groupColors[group] || '#6b7280';
                 const statusText = d.status || 'UNKNOWN';
                 const statusClass = `status-${statusText.toLowerCase()}`;
                 const latency = d.latency_ms ? `${d.latency_ms.toFixed(1)}ms` : 'N/A';
                 const lastCheck = d.last_check ? new Date(d.last_check).toLocaleTimeString() : 'Never';
-                const downtime = d.downtime_display || '-';
                 
                 html += `<tr>
-                    <td><span class="group-badge" style="background: ${groupColor}; color: white;">${escapeHtml(group)}</span></td>
+                    <td><span class="group-badge">${escapeHtml(group)}</span></td>
                     <td><strong>${escapeHtml(d.name)}</strong></td>
                     <td>${escapeHtml(ip)}</td>
                     <td><span class="status-badge-sm ${statusClass}">${escapeHtml(statusText)}</span></td>
                     <td>${latency}</td>
                     <td>${lastCheck}</td>
-                    <td>${downtime}</td>
                     <td>
                         <button class="action-btn edit-btn" onclick="openEditModal('${d.device_id}', '${escapeHtml(d.name)}', '${escapeHtml(ip)}', '${escapeHtml(group)}')">Edit</button>
                         <button class="action-btn delete-btn" onclick="deleteDevice('${d.device_id}')">Delete</button>
@@ -359,7 +319,7 @@
             html += `</tbody></table>`;
             document.getElementById('devices-table').innerHTML = html;
         }
-        
+
         function escapeHtml(str) { 
             if (!str) return '';
             return str.replace(/[&<>]/g, function(m) { 
@@ -367,7 +327,7 @@
                 return escapes[m];
             }); 
         }
-        
+
         function openAddModal() {
             editingDeviceId = null;
             document.getElementById('modal-title').textContent = 'Add Device';
@@ -376,7 +336,7 @@
             document.getElementById('device-group').value = '';
             document.getElementById('modal').style.display = 'flex';
         }
-        
+
         function openEditModal(id, name, ip, group) {
             editingDeviceId = id;
             document.getElementById('modal-title').textContent = 'Edit Device';
@@ -385,20 +345,24 @@
             document.getElementById('device-group').value = group;
             document.getElementById('modal').style.display = 'flex';
         }
-        
+
         async function saveDevice() {
             const name = document.getElementById('device-name').value.trim();
             const ip = document.getElementById('device-ip').value.trim();
             const group = document.getElementById('device-group').value.trim() || 'Default';
-            if (!name || !ip) { alert('Please enter name and IP'); return; }
+            
+            if (!name || !ip) { 
+                alert('Please enter both name and IP address'); 
+                return; 
+            }
             
             try {
                 if (editingDeviceId) {
                     await fetch(`${API_URL}/user/devices/${editingDeviceId}?token=${token}&name=${encodeURIComponent(name)}&ip=${encodeURIComponent(ip)}&group=${encodeURIComponent(group)}`, { method: 'PUT' });
-                    alert('✅ Device updated!');
+                    alert('Device updated successfully');
                 } else {
                     await fetch(`${API_URL}/user/devices?token=${token}&name=${encodeURIComponent(name)}&ip=${encodeURIComponent(ip)}&group=${encodeURIComponent(group)}`, { method: 'POST' });
-                    alert('✅ Device added!');
+                    alert('Device added successfully');
                 }
                 closeModal();
                 loadDevices();
@@ -406,38 +370,55 @@
                 alert('Error saving device');
             }
         }
-        
+
         async function deleteDevice(id) {
-            if (!confirm('Delete this device?')) return;
+            if (!confirm('Are you sure you want to delete this device?')) return;
             try {
                 await fetch(`${API_URL}/user/devices/${id}?token=${token}`, { method: 'DELETE' });
-                alert('✅ Device deleted!');
+                alert('Device deleted successfully');
                 loadDevices();
             } catch (error) {
                 alert('Error deleting device');
             }
         }
-        
+
         function closeModal() {
             document.getElementById('modal').style.display = 'none';
             editingDeviceId = null;
         }
-        
-        // Auto refresh
-        let refreshInterval;
+
         function startAutoRefresh() {
             if (refreshInterval) clearInterval(refreshInterval);
-            refreshInterval = setInterval(() => { loadDevices(); updateMonitoringStatus(); }, 5000);
+            refreshInterval = setInterval(() => { 
+                loadDevices(); 
+                updateMonitoringStatus(); 
+            }, 5000);
         }
-        
+
+        // Event listeners
+        document.getElementById('device-search').addEventListener('input', function() {
+            loadDevices();
+        });
+
+        document.querySelectorAll('.preset-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const interval = this.getAttribute('data-interval');
+                document.getElementById('interval-input').value = interval;
+                document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+            });
+        });
+
         // Initialize
         if (checkAuth()) {
             loadDevices();
             updateMonitoringStatus();
             startAutoRefresh();
         }
-        
-        window.onclick = function(e) { if (e.target === document.getElementById('modal')) closeModal(); };
+
+        window.onclick = function(e) { 
+            if (e.target === document.getElementById('modal')) closeModal(); 
+        };
     </script>
 </body>
 </html>

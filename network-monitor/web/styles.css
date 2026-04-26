@@ -2102,3 +2102,523 @@ tr:hover {
         justify-content: center;
     }
 }
+/* ============================================
+   UNIFIED AUTH PAGES - Premium Glassmorphism Design
+   ============================================ */
+
+/* Auth body - matches landing page background */
+.auth-body {
+    background: radial-gradient(1200px 600px at 70% 0%, rgba(86, 215, 255, 0.20) 0%, rgba(255, 255, 255, 0) 55%),
+                radial-gradient(900px 500px at 10% 10%, rgba(79, 140, 255, 0.16) 0%, rgba(255, 255, 255, 0) 55%),
+                linear-gradient(180deg, #f7f9ff 0%, #f3f6ff 40%, #f7f9ff 100%);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+}
+
+/* Glassmorphism auth container */
+.auth-container {
+    max-width: 440px;
+    width: 100%;
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(12px);
+    border-radius: 28px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(79, 140, 255, 0.05);
+    padding: 40px 36px;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.auth-container:hover {
+    box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.3);
+}
+
+/* Logo styling - matches landing page */
+.auth-container .logo {
+    text-align: center;
+    margin-bottom: 32px;
+}
+
+.auth-container .logo h1 {
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    background: linear-gradient(135deg, #4f8cff 0%, #7c3aed 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.auth-container .logo p {
+    color: rgba(15, 23, 42, 0.65);
+    font-size: 14px;
+    margin-top: 8px;
+    font-weight: 500;
+}
+
+/* Form groups with modern styling */
+.auth-container .form-group {
+    margin-bottom: 24px;
+}
+
+.auth-container label {
+    display: block;
+    margin-bottom: 8px;
+    color: rgba(15, 23, 42, 0.85);
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: -0.01em;
+}
+
+.auth-container input {
+    width: 100%;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1.5px solid rgba(15, 23, 42, 0.1);
+    border-radius: 16px;
+    font-size: 14px;
+    transition: all 0.2s ease;
+    font-family: inherit;
+    color: #0f172a;
+}
+
+.auth-container input:focus {
+    outline: none;
+    border-color: #4f8cff;
+    box-shadow: 0 0 0 3px rgba(79, 140, 255, 0.1);
+    background: white;
+}
+
+.auth-container input::placeholder {
+    color: rgba(15, 23, 42, 0.35);
+}
+
+/* Button styling - matches landing page lp-btn-primary */
+.auth-container button {
+    width: 100%;
+    padding: 12px 18px;
+    background: linear-gradient(135deg, #4f8cff 0%, #7c3aed 100%);
+    color: white;
+    border: none;
+    border-radius: 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 14px 30px rgba(79, 140, 255, 0.28);
+    margin-top: 8px;
+}
+
+.auth-container button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 16px 40px rgba(79, 140, 255, 0.34);
+}
+
+.auth-container button:active {
+    transform: translateY(1px);
+}
+
+/* Auth link styling */
+.auth-link {
+    text-align: center;
+    margin-top: 28px;
+    color: rgba(15, 23, 42, 0.65);
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.auth-link a {
+    color: #4f8cff;
+    text-decoration: none;
+    font-weight: 600;
+    transition: color 0.2s ease;
+}
+
+.auth-link a:hover {
+    color: #7c3aed;
+    text-decoration: underline;
+}
+
+/* Message styling - matches design system */
+.auth-container .error,
+.auth-container .success {
+    padding: 12px 16px;
+    border-radius: 14px;
+    margin-bottom: 24px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 500;
+    animation: slideIn 0.3s ease;
+}
+
+.auth-container .error {
+    background: rgba(239, 68, 68, 0.12);
+    color: #b91c1c;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.auth-container .success {
+    background: rgba(16, 185, 129, 0.12);
+    color: #065f46;
+    border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Responsive adjustments for auth pages */
+@media (max-width: 520px) {
+    .auth-container {
+        padding: 32px 24px;
+        margin: 16px;
+    }
+    
+    .auth-container .logo h1 {
+        font-size: 28px;
+    }
+}
+
+/* Focus visible for accessibility */
+.auth-container input:focus-visible,
+.auth-container button:focus-visible {
+    outline: 2px solid #4f8cff;
+    outline-offset: 2px;
+}
+/* ============================================
+   UNIFIED DASHBOARD DESIGN - Premium Glassmorphism
+   ============================================ */
+
+/* Dashboard body background */
+body:not(.lp-body):not(.auth-body) {
+    background: radial-gradient(1200px 600px at 70% 0%, rgba(86, 215, 255, 0.12) 0%, rgba(255, 255, 255, 0) 55%),
+                radial-gradient(900px 500px at 10% 10%, rgba(79, 140, 255, 0.10) 0%, rgba(255, 255, 255, 0) 55%),
+                linear-gradient(180deg, #f7f9ff 0%, #f3f6ff 40%, #f7f9ff 100%);
+}
+
+/* Navbar - glassmorphism */
+.navbar {
+    background: rgba(255, 255, 255, 0.92) !important;
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+    padding: 16px 32px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+}
+
+.navbar-left {
+    display: flex;
+    align-items: center;
+    gap: 32px;
+    flex-wrap: wrap;
+}
+
+.brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: #0f172a;
+    font-size: 18px;
+}
+
+.brand-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #4f8cff 0%, #56d7ff 100%);
+    box-shadow: 0 8px 16px rgba(79, 140, 255, 0.25);
+}
+
+.nav-links a {
+    color: rgba(15, 23, 42, 0.72) !important;
+    text-decoration: none;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: 12px;
+    transition: all 0.2s ease;
+    font-size: 14px;
+}
+
+.nav-links a:hover {
+    color: #0f172a !important;
+    background: rgba(79, 140, 255, 0.1);
+}
+
+.nav-links a.active {
+    color: #4f8cff !important;
+    background: rgba(79, 140, 255, 0.12);
+}
+
+.user-summary {
+    background: rgba(79, 140, 255, 0.08);
+    padding: 6px 16px;
+    border-radius: 40px;
+    border: 1px solid rgba(79, 140, 255, 0.15);
+}
+
+#username-display {
+    font-weight: 600;
+    font-size: 13px;
+    color: #0f172a;
+    background: transparent !important;
+    padding: 0 !important;
+}
+
+#email-display {
+    font-size: 12px;
+    color: rgba(15, 23, 42, 0.6);
+}
+
+.logout-btn {
+    background: rgba(239, 68, 68, 0.1) !important;
+    color: #dc2626 !important;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    padding: 6px 14px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    transition: all 0.2s ease;
+}
+
+.logout-btn:hover {
+    background: rgba(239, 68, 68, 0.2) !important;
+    transform: translateY(-1px);
+}
+
+/* Dashboard cards - glassmorphism */
+.dashboard-card, .info-card, .device-section {
+    background: rgba(255, 255, 255, 0.85) !important;
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 20px;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
+}
+
+.dashboard-card:hover, .info-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.08);
+    background: rgba(255, 255, 255, 0.95) !important;
+}
+
+.dashboard-badge {
+    background: rgba(79, 140, 255, 0.12);
+    color: #4f8cff;
+}
+
+/* Buttons - unified */
+.btn-start {
+    background: linear-gradient(135deg, #4f8cff 0%, #7c3aed 100%) !important;
+    box-shadow: 0 4px 12px rgba(79, 140, 255, 0.3);
+}
+
+.btn-start:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 20px rgba(79, 140, 255, 0.4);
+}
+
+.btn-stop {
+    background: rgba(239, 68, 68, 0.9) !important;
+}
+
+.btn-stop:hover {
+    background: #dc2626 !important;
+    transform: translateY(-1px);
+}
+
+.add-btn {
+    background: linear-gradient(135deg, #4f8cff 0%, #7c3aed 100%) !important;
+}
+
+.add-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(79, 140, 255, 0.3);
+}
+
+.refresh-btn {
+    background: rgba(255, 255, 255, 0.9);
+    color: #0f172a;
+    border: 1px solid rgba(15, 23, 42, 0.15);
+}
+
+.refresh-btn:hover {
+    background: white;
+    transform: translateY(-1px);
+}
+
+.btn-save {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+}
+
+/* Input fields */
+.select-input, .alert-input, .search-input {
+    border: 1.5px solid rgba(15, 23, 42, 0.1);
+    border-radius: 14px;
+    transition: all 0.2s ease;
+}
+
+.select-input:focus, .alert-input:focus, .search-input:focus {
+    outline: none;
+    border-color: #4f8cff;
+    box-shadow: 0 0 0 3px rgba(79, 140, 255, 0.1);
+}
+
+/* Status pills */
+.status-pill.status-inactive {
+    background: rgba(239, 68, 68, 0.1);
+    color: #dc2626;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.status-pill.status-active {
+    background: rgba(16, 185, 129, 0.15);
+    color: #059669;
+    border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+/* Preset buttons */
+.preset-btn {
+    border-radius: 40px;
+    border: 1px solid rgba(15, 23, 42, 0.12);
+    background: white;
+    transition: all 0.2s ease;
+}
+
+.preset-btn:hover {
+    background: rgba(79, 140, 255, 0.1);
+    border-color: rgba(79, 140, 255, 0.3);
+}
+
+.preset-btn.active {
+    background: linear-gradient(135deg, #4f8cff 0%, #7c3aed 100%);
+    color: white;
+    border-color: transparent;
+}
+
+/* Table styling */
+th {
+    background: rgba(79, 140, 255, 0.04);
+    font-weight: 700;
+    font-size: 13px;
+    color: rgba(15, 23, 42, 0.8);
+}
+
+tr:hover {
+    background: rgba(79, 140, 255, 0.03);
+}
+
+/* Modal */
+.modal-content {
+    background: rgba(255, 255, 255, 0.98);
+    backdrop-filter: blur(12px);
+    border-radius: 24px;
+    border: 1px solid rgba(15, 23, 42, 0.1);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+}
+
+.save-btn {
+    background: linear-gradient(135deg, #4f8cff 0%, #7c3aed 100%);
+}
+
+.cancel-btn {
+    background: rgba(15, 23, 42, 0.1);
+    color: #0f172a;
+}
+
+/* Improve existing dashboard responsiveness */
+@media (max-width: 1024px) {
+    .overview-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+    
+    .control-grid {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+@media (max-width: 768px) {
+    .navbar {
+        padding: 16px 20px !important;
+    }
+    
+    .navbar-left {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+    
+    .dashboard-main {
+        padding: 20px 16px !important;
+    }
+    
+    .hero-copy h1 {
+        font-size: 28px !important;
+    }
+    
+    .overview-grid {
+        grid-template-columns: 1fr !important;
+        gap: 12px !important;
+    }
+    
+    .section-header {
+        flex-direction: column;
+        align-items: stretch !important;
+    }
+    
+    .search-group {
+        flex-direction: column;
+    }
+    
+    .search-input {
+        width: 100%;
+    }
+}
+/* Additional dashboard improvements */
+.group-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(79, 140, 255, 0.12);
+    color: #4f8cff;
+}
+
+.input-hint {
+    display: block;
+    font-size: 11px;
+    color: rgba(15, 23, 42, 0.5);
+    margin-top: 8px;
+}
+
+#device-search {
+    min-width: 240px;
+}
+
+@media (max-width: 768px) {
+    #device-search {
+        min-width: auto;
+    }
+}

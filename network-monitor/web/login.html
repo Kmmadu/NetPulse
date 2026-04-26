@@ -3,14 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NetPulse - Login</title>
+    <title>NetPulse - Sign In</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body class="auth-body">
     <div class="auth-container">
         <div class="logo">
-            <h1>🌐 NetPulse</h1>
-            <p>Network Monitoring System</p>
+            <h1>
+                <span class="lp-logo-dot" style="display: inline-block;"></span>
+                NetPulse
+            </h1>
+            <p>Monitor your infrastructure with precision</p>
         </div>
         
         <div id="message"></div>
@@ -18,19 +21,19 @@
         <form onsubmit="login(event)">
             <div class="form-group">
                 <label>Username or Email</label>
-                <input type="text" id="username" required placeholder="Enter your username or email">
+                <input type="text" id="username" required placeholder="Enter your username or email" autocomplete="username">
             </div>
             
             <div class="form-group">
                 <label>Password</label>
-                <input type="password" id="password" required placeholder="Enter your password">
+                <input type="password" id="password" required placeholder="Enter your password" autocomplete="current-password">
             </div>
             
-            <button type="submit">Login</button>
+            <button type="submit">Sign In</button>
         </form>
         
         <div class="auth-link">
-            Don't have an account? <a href="register.html">Register here</a>
+            Don't have an account? <a href="register.html">Create account</a>
         </div>
     </div>
     

@@ -3,14 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NetPulse - Register</title>
+    <title>NetPulse - Create Account</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body class="auth-body">
     <div class="auth-container">
         <div class="logo">
-            <h1>🌐 NetPulse</h1>
-            <p>Create your account</p>
+            <h1>
+                <span class="lp-logo-dot" style="display: inline-block;"></span>
+                NetPulse
+            </h1>
+            <p>Start monitoring in minutes</p>
         </div>
         
         <div id="message"></div>
@@ -18,29 +21,29 @@
         <form onsubmit="register(event)">
             <div class="form-group">
                 <label>Username</label>
-                <input type="text" id="username" required placeholder="Choose a username">
+                <input type="text" id="username" required placeholder="Choose a username" autocomplete="username">
             </div>
             
             <div class="form-group">
                 <label>Email</label>
-                <input type="email" id="email" required placeholder="Enter your email">
+                <input type="email" id="email" required placeholder="Enter your email" autocomplete="email">
             </div>
             
             <div class="form-group">
                 <label>Password</label>
-                <input type="password" id="password" required placeholder="Choose a password (min 6 characters)">
+                <input type="password" id="password" required placeholder="Choose a password (min 6 characters)" autocomplete="new-password">
             </div>
             
             <div class="form-group">
                 <label>Confirm Password</label>
-                <input type="password" id="confirm_password" required placeholder="Confirm your password">
+                <input type="password" id="confirm_password" required placeholder="Confirm your password" autocomplete="new-password">
             </div>
             
-            <button type="submit">Register</button>
+            <button type="submit">Create Account</button>
         </form>
         
         <div class="auth-link">
-            Already have an account? <a href="login.html">Login here</a>
+            Already have an account? <a href="login.html">Sign in</a>
         </div>
     </div>
     

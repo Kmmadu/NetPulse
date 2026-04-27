@@ -314,3 +314,9 @@ class Device:
             'max_latency_ms': self.max_latency_ms,
             'packet_loss_threshold': self.packet_loss_threshold
         }
+# Add this method to the Device class
+def get_down_since(self):
+    """Return timestamp when device went down, or None if not down"""
+    if self.status == DeviceStatus.DOWN and hasattr(self, 'down_since'):
+        return self.down_since
+    return None

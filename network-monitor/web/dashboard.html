@@ -173,24 +173,24 @@
         }); 
     }
 
+    function getDeviceId(device) {
+        return device.device_id || device.id;
+    }
+
     function formatDowntimeFromSeconds(downtimeSeconds) {
         if (!downtimeSeconds || downtimeSeconds <= 0) return '—';
         
         const totalSeconds = Math.floor(downtimeSeconds);
         
-        // Years (365 days)
         const years = Math.floor(totalSeconds / 31536000);
         const remainingAfterYears = totalSeconds % 31536000;
         
-        // Days
         const days = Math.floor(remainingAfterYears / 86400);
         const remainingAfterDays = remainingAfterYears % 86400;
         
-        // Hours
         const hours = Math.floor(remainingAfterDays / 3600);
         const remainingAfterHours = remainingAfterDays % 3600;
         
-        // Minutes
         const minutes = Math.floor(remainingAfterHours / 60);
         const seconds = remainingAfterHours % 60;
         
@@ -440,9 +440,6 @@
     }
 
     function displayDevices(devices) {
-        const deviceCountSpan = document.getElementById('device-count');
-        if (deviceCountSpan) deviceCountSpan.textContent = devices.length;
-        
         if (devices.length === 0) {
             document.getElementById('devices-table').innerHTML = '<div class="empty-state">No devices found. Click "Add Device" to get started.</div>';
             return;
@@ -465,6 +462,7 @@
             const group = d.device_group || 'Default';
             const ip = d.ip_address || d.ip || 'N/A';
             const statusText = d.status || 'UNKNOWN';
+            const deviceId = getDeviceId(d);
             
             let statusClass = 'status-unknown';
             if (statusText === 'UP') statusClass = 'status-up';
@@ -490,14 +488,14 @@
                 </td>
                 <td data-label="Status"><span class="status-badge ${statusClass}">${escapeHtml(statusText)}</span></td>
                 <td data-label="Latency" class="latency-value">${latency}</td>
-                <td data-label="Down Time" class="down-time">${downTimeDisplay}</div></td>
+                <td data-label="Down Time" class="down-time">${downTimeDisplay}</td>
                 <td data-label="Actions">
-                    <button class="action-btn edit" onclick="openEditModal('${d.device_id}', '${escapeHtml(d.name)}', '${escapeHtml(ip)}', '${escapeHtml(group)}')">Edit</button>
-                    <button class="action-btn delete" onclick="deleteDevice('${d.device_id}')">Delete</button>
+                    <button class="action-btn edit" onclick="openEditModal('${deviceId}', '${escapeHtml(d.name)}', '${escapeHtml(ip)}', '${escapeHtml(group)}')">Edit</button>
+                    <button class="action-btn delete" onclick="deleteDevice('${deviceId}')">Delete</button>
                 </td>
             </tr>`;
         }
-        html += `</tbody></tr>`;
+        html += `</tbody></table>`;
         document.getElementById('devices-table').innerHTML = html;
     }
 
@@ -552,28 +550,84 @@
         }
         
         try {
+            let response;
+            let data;
+            
             if (editingDeviceId) {
-                await fetch(`${API_URL}/user/devices/${editingDeviceId}?token=${token}&name=${encodeURIComponent(name)}&ip=${encodeURIComponent(ip)}&group=${encodeURIComponent(group)}`, { method: 'PUT' });
-                alert('Device updated successfully');
+                response = await fetch(`${API_URL}/user/devices/${editingDeviceId}?token=${token}&name=${encodeURIComponent(name)}&ip=${encodeURIComponent(ip)}&group=${encodeURIComponent(group)}`, { 
+                    method: 'PUT' 
+                });
+                data = await response.json();
+                
+                if (response.ok && data.success) {
+                    const index = allDevices.findIndex(d => getDeviceId(d) === editingDeviceId);
+                    if (index !== -1) {
+                        allDevices[index] = {
+                            ...allDevices[index],
+                            name: name,
+                            ip_address: ip,
+                            device_group: group
+                        };
+                    }
+                    alert('Device updated successfully');
+                } else {
+                    alert(data.error || 'Failed to update device');
+                    await loadDevices();
+                }
             } else {
-                await fetch(`${API_URL}/user/devices?token=${token}&name=${encodeURIComponent(name)}&ip=${encodeURIComponent(ip)}&group=${encodeURIComponent(group)}`, { method: 'POST' });
-                alert('Device added successfully');
+                response = await fetch(`${API_URL}/user/devices?token=${token}&name=${encodeURIComponent(name)}&ip=${encodeURIComponent(ip)}&group=${encodeURIComponent(group)}`, { 
+                    method: 'POST' 
+                });
+                data = await response.json();
+                
+                if (response.ok && data.success) {
+                    if (data.device) {
+                        allDevices.push(data.device);
+                    } else {
+                        await loadDevices();
+                    }
+                    alert('Device added successfully');
+                } else {
+                    alert(data.error || 'Failed to add device');
+                }
             }
+            
             closeModal();
-            loadDevices();
+            updateStats(allDevices);
+            applyFilters();
+            
         } catch (error) {
+            console.error('Save error:', error);
             alert('Error saving device');
         }
     }
 
     async function deleteDevice(id) {
+        if (!id) {
+            alert('Error: Invalid device ID');
+            return;
+        }
+        
         if (!confirm('Are you sure you want to delete this device?')) return;
+        
         try {
-            await fetch(`${API_URL}/user/devices/${id}?token=${token}`, { method: 'DELETE' });
-            alert('Device deleted successfully');
-            loadDevices();
+            const response = await fetch(`${API_URL}/user/devices/${id}?token=${token}`, { 
+                method: 'DELETE' 
+            });
+            const data = await response.json();
+            
+            if (response.ok && data.success) {
+                allDevices = allDevices.filter(d => getDeviceId(d) !== id);
+                updateStats(allDevices);
+                applyFilters();
+                alert('Device deleted successfully');
+            } else {
+                alert(data.error || data.message || 'Failed to delete device');
+                await loadDevices();
+            }
         } catch (error) {
-            alert('Error deleting device');
+            console.error('Delete error:', error);
+            alert('Error deleting device: ' + error.message);
         }
     }
 

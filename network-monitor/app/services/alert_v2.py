@@ -7,12 +7,20 @@ Event-driven alerts only for meaningful state changes
 import smtplib
 import os
 import sqlite3
+import socket
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 from contextlib import contextmanager
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Fix .env loading with absolute path
+env_path = Path(__file__).parent.parent / '.env'  # app/services/ -> network-monitor/
+if not env_path.exists():
+    env_path = Path.cwd() / '.env'  # Fallback to current directory
+
+load_dotenv(dotenv_path=env_path, override=True)
+print(f"📁 Loading .env from: {env_path}")
 
 
 class AlertType:
@@ -26,6 +34,8 @@ class AlertServiceV2:
     
     def __init__(self, db_path: str = "data/monitor.db"):
         self.db_path = db_path
+        
+        # Load from environment with debugging
         self.smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
         self.smtp_port = int(os.getenv('SMTP_PORT', '587'))
         self.username = os.getenv('SMTP_USERNAME', '')
@@ -33,18 +43,59 @@ class AlertServiceV2:
         self.from_addr = os.getenv('SMTP_FROM', self.username)
         self.to_addrs = [addr.strip() for addr in os.getenv('SMTP_TO', '').split(',') if addr.strip()]
         
+        # Read ALERTS_ENABLED flag
+        alerts_enabled = os.getenv('ALERTS_ENABLED', 'true').lower() == 'true'
+        
         # Cooldown settings (in minutes)
         self.down_cooldown_minutes = int(os.getenv('ALERT_DOWN_COOLDOWN', '5'))
         self.recovery_cooldown_minutes = int(os.getenv('ALERT_RECOVERY_COOLDOWN', '5'))
         self.erratic_cooldown_minutes = int(os.getenv('ALERT_ERRATIC_COOLDOWN', '30'))
         
+        # Debug: Print configuration status
+        print("\n" + "="*50)
+        print("📧 Alert Service V2 - Configuration Debug")
+        print("="*50)
+        print(f"📁 .env path: {env_path}")
+        print(f"📡 SMTP_SERVER: {self.smtp_server}")
+        print(f"🔌 SMTP_PORT: {self.smtp_port}")
+        print(f"👤 SMTP_USERNAME: {self.username}")
+        print(f"🔑 SMTP_PASSWORD: {'✅ SET' if self.password else '❌ NOT SET'}")
+        print(f"📤 SMTP_FROM: {self.from_addr}")
+        print(f"📬 SMTP_TO: {self.to_addrs}")
+        print(f"🎛️ ALERTS_ENABLED: {alerts_enabled}")
+        print(f"⏱️ DOWN_COOLDOWN: {self.down_cooldown_minutes} min")
+        print(f"⏱️ RECOVERY_COOLDOWN: {self.recovery_cooldown_minutes} min")
+        print(f"⏱️ ERRATIC_COOLDOWN: {self.erratic_cooldown_minutes} min")
+        print("="*50 + "\n")
+        
+        # Check if alerts are enabled by config
+        if not alerts_enabled:
+            self._enabled = False
+            print("⚠️ Alert Service V2 DISABLED - ALERTS_ENABLED=false in .env")
+            return
+        
+        # Check for missing configuration
+        missing = []
+        if not self.username:
+            missing.append("SMTP_USERNAME")
+        if not self.password:
+            missing.append("SMTP_PASSWORD")
+        if not self.to_addrs:
+            missing.append("SMTP_TO")
+        
+        if missing:
+            self._enabled = False
+            print(f"❌ Alert Service V2 DISABLED - Missing environment variables: {', '.join(missing)}")
+            print("   Please check your .env file")
+            return
+        
         self._enabled = self._check_enabled()
         self._init_db()
         
         if self._enabled:
-            print(f"✅ Alert Service V2 enabled: sending to {', '.join(self.to_addrs)}")
+            print(f"✅ Alert Service V2 ENABLED - sending to {', '.join(self.to_addrs)}")
         else:
-            print("⚠️ Alert Service V2 disabled (configure SMTP_* in .env)")
+            print("⚠️ Alert Service V2 DISABLED - SMTP connection test failed")
     
     def _init_db(self):
         """Initialize database tables for alert tracking"""
@@ -92,13 +143,115 @@ class AlertServiceV2:
             conn.close()
     
     def _check_enabled(self) -> bool:
-        """Check if email alerts are properly configured"""
-        return bool(self.smtp_server and self.username and self.password and self.to_addrs)
+        """Real SMTP connection test - not just env var check"""
+        print("\n" + "="*50)
+        print("🔌 Running SMTP Connection Test")
+        print("="*50)
+        
+        # First, check if we have the required config
+        if not all([self.smtp_server, self.username, self.password, self.to_addrs]):
+            missing = []
+            if not self.smtp_server:
+                missing.append("SMTP_SERVER")
+            if not self.username:
+                missing.append("SMTP_USERNAME")
+            if not self.password:
+                missing.append("SMTP_PASSWORD")
+            if not self.to_addrs:
+                missing.append("SMTP_TO")
+            print(f"❌ Missing required config: {', '.join(missing)}")
+            return False
+        
+        print(f"📡 Testing connection to {self.smtp_server}:{self.smtp_port}")
+        
+        # Test port connectivity first
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(10)
+            result = sock.connect_ex((self.smtp_server, self.smtp_port))
+            sock.close()
+            
+            if result != 0:
+                print(f"❌ Port {self.smtp_port} is BLOCKED or unreachable (error code: {result})")
+                print("   Possible causes:")
+                print("   - Firewall blocking outbound SMTP")
+                print("   - Network proxy restrictions")
+                print("   - Internet connectivity issue")
+                print("\n   To test manually, run:")
+                print(f"   telnet {self.smtp_server} {self.smtp_port}")
+                print(f"   or: nc -zv {self.smtp_server} {self.smtp_port}")
+                return False
+            else:
+                print(f"✅ Port {self.smtp_port} is reachable")
+        except Exception as e:
+            print(f"❌ Port test failed: {e}")
+            return False
+        
+        # Now test full SMTP connection
+        try:
+            print("🔄 Connecting to SMTP server...")
+            server = smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=30)
+            server.set_debuglevel(1)  # Show SMTP conversation
+            print("✅ SMTP connection established")
+            
+            # Identify ourselves
+            server.ehlo()
+            
+            print("🔄 Starting TLS...")
+            server.starttls()
+            server.ehlo()  # Re-identify after TLS
+            print("✅ TLS handshake complete")
+            
+            print("🔄 Authenticating...")
+            server.login(self.username, self.password)
+            print("✅ Authentication successful")
+            
+            print("🔄 Sending test quit...")
+            server.quit()
+            print("✅ SMTP test completed successfully")
+            
+            return True
+            
+        except socket.timeout:
+            print("❌ SMTP test FAILED: Connection timeout")
+            print("   Server took too long to respond")
+            return False
+        except smtplib.SMTPAuthenticationError as e:
+            print(f"❌ SMTP test FAILED: Authentication error - {e}")
+            print("   Troubleshooting:")
+            print("   1. If using Gmail, ensure 2FA is enabled")
+            print("   2. Generate an App Password (not your regular password)")
+            print("   3. App Password should be 16 characters with no spaces")
+            print("   4. Check that 'Allow less secure apps' is OFF (use App Password instead)")
+            return False
+        except smtplib.SMTPConnectError as e:
+            print(f"❌ SMTP test FAILED: Cannot connect - {e}")
+            print("   Troubleshooting:")
+            print("   1. Check if SMTP server address is correct")
+            print("   2. Verify network connectivity")
+            print("   3. Try a different port (465 for SSL, 587 for TLS)")
+            return False
+        except smtplib.SMTPServerDisconnected as e:
+            print(f"❌ SMTP test FAILED: Server disconnected - {e}")
+            return False
+        except smtplib.SMTPException as e:
+            print(f"❌ SMTP test FAILED: {type(e).__name__} - {e}")
+            return False
+        except Exception as e:
+            print(f"❌ SMTP test FAILED: Unexpected error - {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
     
     def _send_email(self, subject: str, body: str) -> bool:
-        """Send email using configured SMTP server"""
+        """Send email using configured SMTP server with real-time debugging"""
         if not self._enabled:
+            print("❌ Email not sent - Alert service is disabled")
             return False
+        
+        print(f"\n📧 Attempting to send email...")
+        print(f"   Subject: {subject[:50]}..." if len(subject) > 50 else f"   Subject: {subject}")
+        print(f"   To: {', '.join(self.to_addrs)}")
         
         try:
             from email.mime.text import MIMEText
@@ -111,16 +264,58 @@ class AlertServiceV2:
             
             msg.attach(MIMEText(body, 'plain'))
             
-            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
-                server.starttls()
-                server.login(self.username, self.password)
-                server.send_message(msg)
+            print("   Connecting to SMTP server...")
+            server = smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=30)
+            server.set_debuglevel(1)  # Enable SMTP debug output
+            print(f"   ✅ Connected to {self.smtp_server}:{self.smtp_port}")
             
-            print(f"📧 Alert sent: {subject}")
+            # Identify ourselves to Gmail (helps with deliverability)
+            server.ehlo()
+            
+            print("   Starting TLS...")
+            server.starttls()
+            server.ehlo()  # Re-identify after TLS
+            print("   ✅ TLS established")
+            
+            print("   Logging in...")
+            server.login(self.username, self.password)
+            print(f"   ✅ Logged in as {self.username}")
+            
+            print("   Sending message...")
+            server.send_message(msg)
+            print("   ✅ Message sent")
+            
+            server.quit()
+            print(f"✅ Alert sent successfully: {subject[:50]}...")
             return True
             
+        except smtplib.SMTPAuthenticationError as e:
+            print(f"❌ SMTP Authentication Error: {e}")
+            print("   Troubleshooting:")
+            print("   • Verify your email and App Password are correct")
+            print("   • App Password must be 16 characters with NO spaces")
+            print("   • Enable 2FA on your Google account")
+            print("   • Generate a new App Password at: https://myaccount.google.com/apppasswords")
+            return False
+        except smtplib.SMTPConnectError as e:
+            print(f"❌ SMTP Connection Error: {e}")
+            print(f"   Could not connect to {self.smtp_server}:{self.smtp_port}")
+            print("   Check your network connection and firewall settings")
+            return False
+        except (smtplib.SMTPServerDisconnected, ConnectionResetError) as e:
+            print(f"❌ SMTP Server Disconnected: {e}")
+            print("   The server closed the connection unexpectedly")
+            return False
+        except smtplib.SMTPException as e:
+            print(f"❌ SMTP Error: {type(e).__name__}: {e}")
+            return False
+        except socket.timeout:
+            print("❌ Connection timeout - server took too long to respond")
+            return False
         except Exception as e:
-            print(f"❌ Failed to send email: {e}")
+            print(f"❌ Unexpected error: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def _format_duration(self, seconds: int) -> str:
@@ -378,3 +573,36 @@ NetPulse Network Monitoring
         """
         
         return self._send_email(subject, body.strip())
+    
+    def test_port_connectivity(self) -> Dict:
+        """Test if SMTP port is reachable - diagnostic tool"""
+        result = {
+            'port': self.smtp_port,
+            'server': self.smtp_server,
+            'reachable': False,
+            'error': None
+        }
+        
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(10)
+            code = sock.connect_ex((self.smtp_server, self.smtp_port))
+            sock.close()
+            
+            if code == 0:
+                result['reachable'] = True
+                print(f"✅ Port {self.smtp_port} is OPEN and reachable")
+            else:
+                result['error'] = f"Connection refused (error code: {code})"
+                print(f"❌ Port {self.smtp_port} is BLOCKED or unreachable")
+                print("   To test manually:")
+                print(f"   telnet {self.smtp_server} {self.smtp_port}")
+                print(f"   or: nc -zv {self.smtp_server} {self.smtp_port}")
+        except socket.timeout:
+            result['error'] = "Connection timeout"
+            print(f"❌ Port {self.smtp_port} - Connection timeout")
+        except Exception as e:
+            result['error'] = str(e)
+            print(f"❌ Port test failed: {e}")
+        
+        return result

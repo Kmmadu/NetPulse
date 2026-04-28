@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.models.device import Device, DeviceStatus
 from app.database.db import Database
 from app.auth import UserAuth
+from app.services.alert_v2 import AlertServiceV2
 
 
 class MonitoringEngine:
@@ -30,6 +31,15 @@ class MonitoringEngine:
         self.max_workers = max_workers
         self._check_lock = threading.Lock()
         self.load_devices_from_db()
+    
+    def _handle_status_change_alert(self, device_id: str, old_status: str, new_status: str):
+        """Handle status changes with the new event-driven alert system"""
+        if old_status != new_status:
+            try:
+                alert_service = AlertServiceV2()
+                alert_service.process_status_change(device_id, old_status, new_status)
+            except Exception as e:
+                print(f"⚠️ Alert error: {e}")
     
     def load_devices_from_db(self):
         """Load devices from database - tries user_devices first, then devices table"""
@@ -139,8 +149,18 @@ class MonitoringEngine:
         try:
             ping_result = self.ping(device.ip_address, device.timeout, count=3)
             
+            # Capture old status BEFORE processing the check
+            old_status = device.status.value if device.status else "UNKNOWN"
+            
             # Use average latency for state machine
             result = device.process_check(ping_result['is_reachable'], ping_result['latency_ms'])
+            
+            # Get new status after processing
+            new_status = result['current_status']
+            
+            # Trigger alert if status changed
+            if old_status != new_status:
+                self._handle_status_change_alert(device.device_id, old_status, new_status)
             
             # Add detailed metrics to result
             result['ping_details'] = {

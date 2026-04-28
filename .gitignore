@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# Database
+*.db
+*.db-journal
+data/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+*.pid
+*.tmp
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Backup files
+*.backup
+*.backup2
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Old test files (keep new ones)
+test_email.py
+test_email_direct.py
+test_alert_email.py
+
+# Temporary files
+*.patch
+/tmp/

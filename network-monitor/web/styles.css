@@ -1250,3 +1250,155 @@ body:not(.lp-body):not(.auth-body) {
     font-weight: bold;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
+/* ============================================
+   Landing Page Responsive Fixes
+   ============================================ */
+
+/* Fix hero section alignment */
+.lp-hero {
+    padding: 80px 0 40px 0;
+}
+
+/* Fix feature grid responsiveness */
+@media (max-width: 1024px) {
+    .lp-hero-grid {
+        grid-template-columns: 1fr;
+        gap: 40px;
+        text-align: center;
+    }
+    
+    .lp-hero-copy {
+        text-align: center;
+    }
+    
+    .lp-hero-actions {
+        justify-content: center;
+    }
+    
+    .lp-feature-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .lp-span-12, .lp-span-7, .lp-span-5, .lp-span-4 {
+        grid-column: span 1;
+    }
+    
+    .lp-split {
+        grid-template-columns: 1fr;
+        gap: 40px;
+    }
+}
+
+@media (max-width: 768px) {
+    .lp-nav {
+        flex-wrap: wrap;
+    }
+    
+    .lp-nav-links {
+        display: none;
+    }
+    
+    .lp-hero-copy h1 {
+        font-size: 36px;
+    }
+    
+    .lp-footer-grid {
+        grid-template-columns: 1fr;
+        text-align: center;
+    }
+}
+
+@media (max-width: 480px) {
+    .lp-hero-copy h1 {
+        font-size: 28px;
+    }
+    
+    .lp-hero-actions {
+        flex-direction: column;
+    }
+    
+    .lp-btn {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+/* Fix card hover effects */
+.lp-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.lp-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+}
+
+/* Fix nodes section */
+.lp-node-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.lp-node-row:last-child {
+    border-bottom: none;
+}
+
+/* ============================================
+   Additional Alignment Fixes
+   ============================================ */
+
+@media (max-width: 768px) {
+    .lp-hero {
+        padding: 40px 0 20px 0;
+    }
+    .lp-hero-copy h1 {
+        font-size: 32px;
+        line-height: 1.2;
+    }
+    .lp-lead {
+        font-size: 14px;
+    }
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+    .lp-feature-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 20px;
+    }
+    .lp-span-7, .lp-span-5, .lp-span-4, .lp-span-12 {
+        grid-column: span 1;
+    }
+}
+
+@media (max-width: 768px) {
+    .lp-split-copy {
+        text-align: center;
+    }
+    .lp-split-copy h2 {
+        font-size: 24px;
+    }
+    .lp-nodes {
+        margin: 0 16px;
+    }
+}
+
+.clickable-card.active-filter::after {
+    content: "✓";
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: #4f8cff;
+    color: white;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: bold;
+}

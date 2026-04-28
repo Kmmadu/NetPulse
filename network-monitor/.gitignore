@@ -1,41 +1,59 @@
-# Python
+#!/bin/bash
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
 venv/
 env/
 ENV/
-__pycache__/
-*.py[cod]
-*.so
-.python-version
+.venv
 
 # Database
-data/*.db
-data/*.sqlite
-data/*.sqlite3
 *.db
-*.sqlite
+*.db-journal
+data/*.db
+data/*.db-journal
 
-# Configuration (sensitive)
+# Environment
 .env
-config/settings.json
-config/local.json
+.env.local
+.env.*.local
+
+# Logs
+*.log
+*.pid
+*.tmp
+nohup.out
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 .DS_Store
+Thumbs.db
 
-# Logs
-logs/
-*.log
+# Backup files
+*.backup
+*.backup2
+*.bak
+*.old
+*.disabled
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
+# Test files (keep only the essential ones)
+test_email.py
+test_email_direct.py
+test_alert_email.py
+test_alert.py
 
-# Distribution
-dist/
-build/
-*.egg-info/
+# Temporary files
+*.tmp
+*.patch
+/tmp/
+
+# OS files
+.DS_Store
+Thumbs.db
+EOF

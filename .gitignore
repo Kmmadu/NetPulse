@@ -12,7 +12,8 @@ ENV/
 # Database
 *.db
 *.db-journal
-data/
+data/*.db
+data/*.db-journal
 
 # Environment
 .env
@@ -23,6 +24,7 @@ data/
 *.log
 *.pid
 *.tmp
+nohup.out
 
 # IDE
 .vscode/
@@ -30,21 +32,27 @@ data/
 *.swp
 *.swo
 *~
+.DS_Store
+Thumbs.db
 
 # Backup files
 *.backup
 *.backup2
 *.bak
+*.old
+*.disabled
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Old test files (keep new ones)
+# Test files (keep only the essential ones)
 test_email.py
 test_email_direct.py
 test_alert_email.py
+test_alert.py
 
 # Temporary files
+*.tmp
 *.patch
 /tmp/
+
+# OS files
+.DS_Store
+Thumbs.db

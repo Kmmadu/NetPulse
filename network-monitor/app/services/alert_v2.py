@@ -33,7 +33,9 @@ class AlertServiceV2:
         self.from_addr = os.getenv('SMTP_FROM', self.username)
         self.to_addrs = [addr.strip() for addr in os.getenv('SMTP_TO', '').split(',') if addr.strip()]
         
-        # Cooldown settings
+        # Cooldown settings (in minutes)
+        self.down_cooldown_minutes = int(os.getenv('ALERT_DOWN_COOLDOWN', '5'))
+        self.recovery_cooldown_minutes = int(os.getenv('ALERT_RECOVERY_COOLDOWN', '5'))
         self.erratic_cooldown_minutes = int(os.getenv('ALERT_ERRATIC_COOLDOWN', '30'))
         
         self._enabled = self._check_enabled()
@@ -55,16 +57,12 @@ class AlertServiceV2:
             
             if 'down_since' not in columns:
                 cursor.execute("ALTER TABLE devices ADD COLUMN down_since TIMESTAMP")
-                print("✅ Added column: down_since")
             if 'last_down_alert_sent_at' not in columns:
                 cursor.execute("ALTER TABLE devices ADD COLUMN last_down_alert_sent_at TIMESTAMP")
-                print("✅ Added column: last_down_alert_sent_at")
             if 'last_recovery_alert_sent_at' not in columns:
                 cursor.execute("ALTER TABLE devices ADD COLUMN last_recovery_alert_sent_at TIMESTAMP")
-                print("✅ Added column: last_recovery_alert_sent_at")
             if 'last_erratic_alert_sent_at' not in columns:
                 cursor.execute("ALTER TABLE devices ADD COLUMN last_erratic_alert_sent_at TIMESTAMP")
-                print("✅ Added column: last_erratic_alert_sent_at")
             
             # Create status history table
             cursor.execute("""
@@ -184,15 +182,8 @@ class AlertServiceV2:
             # Erratic if status changed 3 or more times in last 10 checks
             return changes >= 3
     
-    def _should_send_alert(self, device_id: str, alert_type: str) -> bool:
+    def _should_send_alert(self, device_id: str, alert_type: str, cooldown_minutes: int) -> bool:
         """Check cooldown for alert type"""
-        cooldown_map = {
-            AlertType.DOWN: 0,
-            AlertType.RECOVERY: 0,
-            AlertType.ERRATIC: self.erratic_cooldown_minutes
-        }
-        
-        cooldown_minutes = cooldown_map.get(alert_type, 0)
         if cooldown_minutes == 0:
             return True
         
@@ -229,87 +220,90 @@ class AlertServiceV2:
     
     def send_down_alert(self, device_id: str, device_name: str, device_ip: str):
         """Send DOWN alert - only once when device goes down"""
-        if not self._should_send_alert(device_id, AlertType.DOWN):
+        if not self._should_send_alert(device_id, "down", self.down_cooldown_minutes):
             return
         
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now().strftime("%I:%M %p").lstrip('0')
         
-        subject = f"ALERT: {device_name} is DOWN"
+        subject = f"[NetPulse] 🔴 Device Down – {device_name}"
         
         body = f"""
-DEVICE DOWN ALERT
-
 Device: {device_name}
 IP Address: {device_ip}
+
 Status: DOWN
 Time: {timestamp}
 
-Action Required:
-- Check device power and network connectivity
-- Verify if device is responding to ping
-- Check device logs for errors
+What this means:
+This device is currently unreachable or experiencing serious network issues.
 
-This alert will not repeat while the device remains down.
-        """.strip()
+What you can do:
+
+• Check if the device is powered on
+• Check network connection
+• Contact your network administrator
+
+---
+NetPulse Network Monitoring
+        """
         
-        self._send_email(subject, body)
-        self._update_alert_timestamp(device_id, AlertType.DOWN)
+        self._send_email(subject, body.strip())
+        self._update_alert_timestamp(device_id, "down")
     
     def send_recovery_alert(self, device_id: str, device_name: str, device_ip: str, downtime_seconds: int):
         """Send RECOVERY alert when device comes back up"""
-        if not self._should_send_alert(device_id, AlertType.RECOVERY):
+        if not self._should_send_alert(device_id, "recovery", self.recovery_cooldown_minutes):
             return
         
         duration = self._format_duration(downtime_seconds)
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now().strftime("%I:%M %p").lstrip('0')
         
-        subject = f"RECOVERY: {device_name} is back ONLINE"
+        subject = f"[NetPulse] 🟢 Device Restored – {device_name}"
         
         body = f"""
-DEVICE RECOVERY ALERT
-
 Device: {device_name}
-IP Address: {device_ip}
+
 Status: ONLINE
 Recovered At: {timestamp}
-Total Downtime: {duration}
+Downtime: {duration}
 
-Service has been restored.
-        """.strip()
+Good news — the device is back online and working normally.
+
+---
+NetPulse Network Monitoring
+        """
         
-        self._send_email(subject, body)
-        self._update_alert_timestamp(device_id, AlertType.RECOVERY)
+        self._send_email(subject, body.strip())
+        self._update_alert_timestamp(device_id, "recovery")
     
     def send_erratic_alert(self, device_id: str, device_name: str, device_ip: str):
         """Send ERRATIC behavior warning (flapping detection)"""
-        if not self._should_send_alert(device_id, AlertType.ERRATIC):
+        if not self._should_send_alert(device_id, "erratic", self.erratic_cooldown_minutes):
             return
         
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now().strftime("%I:%M %p").lstrip('0')
         
-        subject = f"WARNING: {device_name} is unstable (frequent status changes)"
+        subject = f"[NetPulse] ⚠️ Unstable Device – {device_name}"
         
         body = f"""
-DEVICE UNSTABLE WARNING
-
 Device: {device_name}
-IP Address: {device_ip}
-Status: FLAPPING / UNSTABLE
-Time: {timestamp}
 
-This device has been changing status frequently in the last few minutes.
+Status: UNSTABLE
 
-Recommended Actions:
-- Check network stability
-- Investigate physical connection
-- Review device configuration
-- Monitor for potential hardware issues
+This device has been going up and down repeatedly in a short time.
 
-Next alert for this issue will be sent after {self.erratic_cooldown_minutes} minutes if condition persists.
-        """.strip()
+This may indicate:
+
+• Unstable network connection
+• Power issues
+• Hardware problems
+
+---
+NetPulse Network Monitoring
+        """
         
-        self._send_email(subject, body)
-        self._update_alert_timestamp(device_id, AlertType.ERRATIC)
+        self._send_email(subject, body.strip())
+        self._update_alert_timestamp(device_id, "erratic")
     
     def process_status_change(self, device_id: str, old_status: str, new_status: str):
         """
@@ -325,10 +319,14 @@ Next alert for this issue will be sent after {self.erratic_cooldown_minutes} min
         # Get device info
         device = self._get_device_info(device_id)
         if not device:
+            print(f"⚠️ Device not found: {device_id}")
             return
+        
+        print(f"🔵 Processing status change: {device['name']} - {old_status} → {new_status}")
         
         # Case 1: Device went DOWN
         if new_status == "DOWN" and old_status != "DOWN":
+            print(f"🔴 Device {device['name']} is DOWN - sending alert")
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
@@ -345,6 +343,7 @@ Next alert for this issue will be sent after {self.erratic_cooldown_minutes} min
             if down_since:
                 down_time = datetime.fromisoformat(down_since)
                 downtime_seconds = int((datetime.now() - down_time).total_seconds())
+                print(f"🟢 Device {device['name']} recovered after {downtime_seconds} seconds")
                 
                 with self._get_connection() as conn:
                     cursor = conn.cursor()
@@ -356,31 +355,26 @@ Next alert for this issue will be sent after {self.erratic_cooldown_minutes} min
         
         # Case 3: Check for erratic behavior
         if self._is_erratic(device_id):
+            print(f"⚠️ Device {device['name']} is erratic")
             self.send_erratic_alert(device_id, device['name'], device['ip_address'])
     
     def send_test_alert(self) -> bool:
         """Send a test email to verify configuration"""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now().strftime("%I:%M %p").lstrip('0')
         
-        subject = "NetPulse Alert System - Test Notification"
+        subject = "[NetPulse] ✅ Test Alert – Configuration Verified"
         
         body = f"""
-NETPULSE ALERT SYSTEM TEST
+This is a test message from your NetPulse monitoring system.
 
-This is a test message confirming your alert configuration is working correctly.
+Your email configuration is working correctly.
 
-Alert System Version: Production V2 (Event-Driven)
-Alert Types Active:
-- DEVICE DOWN (Critical)
-- DEVICE RECOVERY (with downtime duration)
-- ERRATIC DEVICE (flapping detection)
-
-Test Time: {timestamp}
-
-Recipient: {', '.join(self.to_addrs)}
-SMTP Server: {self.smtp_server}
+Time: {timestamp}
 
 No action is required. This is only a test.
-        """.strip()
+
+---
+NetPulse Network Monitoring
+        """
         
-        return self._send_email(subject, body)
+        return self._send_email(subject, body.strip())

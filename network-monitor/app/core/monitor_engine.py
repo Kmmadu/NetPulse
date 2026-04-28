@@ -31,15 +31,54 @@ class MonitoringEngine:
         self.max_workers = max_workers
         self._check_lock = threading.Lock()
         self.load_devices_from_db()
+        
+        # Alert state tracking to prevent duplicates and spam
+        self._last_alert_state: Dict[str, str] = {}      # device_id -> last alerted status (UP/DOWN/DEGRADED)
+        self._last_alert_time: Dict[str, float] = {}     # device_id -> timestamp of last alert
+        self.alert_cooldown = 600  # 10 minutes cooldown in seconds
     
-    def _handle_status_change_alert(self, device_id: str, old_status: str, new_status: str):
-        """Handle status changes with the new event-driven alert system"""
+    def _handle_status_change_alert(self, device_id: str, old_status: str, new_status: str, 
+                                     is_reachable: bool = None):
+        """
+        Handle status changes with the improved alert system.
+        Passes is_reachable for false positive prevention.
+        """
+        current_time = time.time()
+        
+        # Check cooldown: if same state was alerted recently, skip
+        last_state = self._last_alert_state.get(device_id)
+        last_time = self._last_alert_time.get(device_id, 0)
+        
+        # Skip if same state and within cooldown period
+        if last_state == new_status and (current_time - last_time) < self.alert_cooldown:
+            # Try to get device name for logging
+            device_name = device_id
+            for dev in self.devices.values():
+                if dev.device_id == device_id:
+                    device_name = dev.name
+                    break
+            print(f"⏱️  Cooldown: Skipping duplicate {new_status} alert for {device_name}")
+            return
+        
         if old_status != new_status:
             try:
                 alert_service = AlertServiceV2()
-                alert_service.process_status_change(device_id, old_status, new_status)
+                alert_service.process_status_change(device_id, old_status, new_status, is_reachable)
+                
+                # Update tracking after successful alert
+                self._last_alert_state[device_id] = new_status
+                self._last_alert_time[device_id] = current_time
+                
+                # Get device name for logging
+                device_name = device_id
+                for dev in self.devices.values():
+                    if dev.device_id == device_id:
+                        device_name = dev.name
+                        break
+                print(f"🔔 Alert sent: {device_name} - {old_status} → {new_status}")
+                
             except Exception as e:
-                print(f"⚠️ Alert error: {e}")
+                print(f"⚠️ Alert error for {device_id}: {e}")
     
     def load_devices_from_db(self):
         """Load devices from database - tries user_devices first, then devices table"""
@@ -149,18 +188,22 @@ class MonitoringEngine:
         try:
             ping_result = self.ping(device.ip_address, device.timeout, count=3)
             
-            # Capture old status BEFORE processing the check
-            old_status = device.status.value if device.status else "UNKNOWN"
-            
             # Use average latency for state machine
             result = device.process_check(ping_result['is_reachable'], ping_result['latency_ms'])
             
-            # Get new status after processing
-            new_status = result['current_status']
-            
-            # Trigger alert if status changed
-            if old_status != new_status:
-                self._handle_status_change_alert(device.device_id, old_status, new_status)
+            # SINGLE SOURCE OF TRUTH: Use ONLY result["status_changed"] from device.process_check()
+            if result.get('status_changed', False):
+                # Get old status from result (device.process_check tracks this internally)
+                old_status = result.get('previous_status', 'UNKNOWN')
+                new_status = result['current_status']
+                
+                # Pass full context to alert handler including is_reachable for false positive prevention
+                self._handle_status_change_alert(
+                    device_id=device.device_id,
+                    old_status=old_status,
+                    new_status=new_status,
+                    is_reachable=ping_result['is_reachable']
+                )
             
             # Add detailed metrics to result
             result['ping_details'] = {
@@ -298,6 +341,14 @@ class MonitoringEngine:
         for device in self.devices.values():
             icon = "🟢" if device.status == DeviceStatus.UP else "🔴" if device.status == DeviceStatus.DOWN else "🟡"
             print(f"{icon} {device.name}: {device.status.value}")
+    
+    def set_alert_cooldown(self, seconds: int):
+        """Set alert cooldown period in seconds (default 600 = 10 minutes)"""
+        if seconds >= 0:
+            self.alert_cooldown = seconds
+            print(f"✅ Alert cooldown set to {seconds} seconds")
+        else:
+            print(f"⚠️ Invalid cooldown value: {seconds}")
     
     def get_devices(self) -> list:
         """Get all devices"""

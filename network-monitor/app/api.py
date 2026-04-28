@@ -27,7 +27,7 @@ from contextlib import asynccontextmanager
 from app.core.monitor_engine import MonitoringEngine
 from app.models.device import Device, DeviceStatus
 from app.auth import UserAuth
-from app.services.alert import AlertService
+from app.services.alert_v2 import AlertServiceV2 as AlertService
 
 
 # Session storage
@@ -186,7 +186,7 @@ def run_monitoring_loop(user_id: int, interval: int):
     global _monitoring_active
     engine = get_engine_for_user(user_id)
     
-    # Get user's alert email once at the start
+    # Get user's alert email once at the start (for reference only, V2 uses .env)
     conn = sqlite3.connect("data/monitor.db")
     cursor = conn.cursor()
     cursor.execute("SELECT alert_email FROM users WHERE id = ?", (user_id,))
@@ -197,8 +197,8 @@ def run_monitoring_loop(user_id: int, interval: int):
     print(f"[Monitor] Monitoring started for user {user_id}")
     print(f"[Monitor] Alert emails: {alert_emails}")
     
-    # Create alert service once
-    alert_service = AlertService(to_addrs=alert_emails if alert_emails else None)
+    # Create alert service once (V2 reads config from .env)
+    alert_service = AlertService()
     
     while _monitoring_active.get(user_id, False):
         cycle_start = time.time()
@@ -206,8 +206,14 @@ def run_monitoring_loop(user_id: int, interval: int):
             results = engine.check_all_devices()
             for result in results:
                 if result.get('status_changed'):
-                    print(f"[Monitor] Status changed for {result.get('name')}: {result.get('current_status')}")
-                    alert_service.send(result)
+                    old_status = result.get('previous_status', 'UNKNOWN')
+                    new_status = result.get('current_status', 'UNKNOWN')
+                    device_id = result.get('device_id')
+                    print(f"[Monitor] Status changed for {result.get('name')}: {old_status} → {new_status}")
+                    # CORRECTED: process_status_change takes 3 arguments (device_id, old_status, new_status)
+                    # The downtime and is_reachable are tracked internally by the alert service
+                    alert_service.process_status_change(device_id, old_status, new_status)
+                    print(f"🔔 ALERT CALLED for {result.get("name")}")
         except Exception as e:
             print(f"Monitor error: {e}")
         
@@ -347,7 +353,7 @@ async def test_alert_email(token: str):
     if not alert_emails:
         raise HTTPException(status_code=400, detail="No alert emails configured")
     
-    alert_service = AlertService(to_addrs=alert_emails)
+    alert_service = AlertService()
     if alert_service.send_test_alert():
         return {"success": True, "message": "Test alert sent"}
     raise HTTPException(status_code=500, detail="Failed to send test alert")

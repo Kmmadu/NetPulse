@@ -180,6 +180,9 @@ class Device:
         # Add to rolling window
         self._add_sample(is_reachable, latency)
         
+        # Calculate packet loss percentage from rolling window
+        packet_loss = self._calculate_packet_loss()
+        
         # Update failure counter (for DOWN detection)
         if is_reachable:
             self._fail_count = 0
@@ -188,11 +191,13 @@ class Device:
         
         # Prepare metrics for quality analyzer (only if reachable)
         quality = None
+        quality_level = None
+        
         if is_reachable:
             metrics = QualityMetrics(
                 avg_latency_ms=self._calculate_avg_latency(),
                 jitter_ms=self._calculate_jitter(),
-                packet_loss_percent=self._calculate_packet_loss(),
+                packet_loss_percent=packet_loss,
                 sample_count=len(self._success_samples),
                 success_count=sum(1 for s in self._success_samples if s),
                 failure_count=sum(1 for s in self._success_samples if not s),
@@ -204,22 +209,39 @@ class Device:
             # Analyze quality only for reachable devices
             quality = self.quality_analyzer.analyze(metrics, old_status.value if old_status else None)
             self._last_quality = quality
-        
-        # Determine new status based on connectivity
-        if not is_reachable and self._fail_count >= self.retry_count:
-            proposed_status = DeviceStatus.DOWN
-        elif is_reachable:
-            # Use quality level from analyzer if available
+            
             if quality and quality.get('quality_level'):
                 quality_level = quality['quality_level']
-                if quality_level == 'Good':
-                    proposed_status = DeviceStatus.UP
-                elif quality_level in ['Degraded', 'Poor']:
-                    proposed_status = DeviceStatus.DEGRADED
-                else:
-                    proposed_status = DeviceStatus.DOWN
-            else:
-                proposed_status = DeviceStatus.UP
+        
+        # ============================================================
+        # STATUS DETERMINATION LOGIC
+        # ============================================================
+        # DOWN: Device is NOT reachable AND retry threshold met
+        #   - Packet loss and latency do NOT trigger DOWN
+        #   - A reachable device is NEVER marked as DOWN
+        #
+        # DEGRADED: Device IS reachable AND (packet_loss >= 10% OR quality is not "Good")
+        #
+        # UP: Device IS reachable AND packet_loss < 10% AND quality_level == "Good"
+        #
+        # UNKNOWN/Previous: Not reachable but retry count not yet met
+        # ============================================================
+        
+        # Rule 1: DOWN - Complete connectivity failure only
+        # A reachable device is NEVER marked as DOWN
+        if not is_reachable and self._fail_count >= self.retry_count:
+            proposed_status = DeviceStatus.DOWN
+        
+        # Rule 2: UP - Reachable, good quality, low packet loss
+        elif is_reachable and packet_loss < 10.0 and quality_level == 'Good':
+            proposed_status = DeviceStatus.UP
+        
+        # Rule 3: DEGRADED - Reachable but has quality issues
+        # This includes: packet_loss >= 10% OR quality_level != "Good"
+        elif is_reachable:
+            proposed_status = DeviceStatus.DEGRADED
+        
+        # Rule 4: Not reachable but retry count not yet met - maintain current status
         else:
             proposed_status = self._status
         
@@ -261,7 +283,7 @@ class Device:
             'transition_type': self._get_transition(old_status, self._status) if status_changed else None,
             'downtime_seconds': self.downtime_seconds,
             'degraded_seconds': self.degraded_seconds,
-            'packet_loss_percent': self._calculate_packet_loss(),
+            'packet_loss_percent': packet_loss,
             'avg_latency_ms': self._calculate_avg_latency(),
             'sample_count': len(self._success_samples),
             'quality': quality,
@@ -283,6 +305,12 @@ class Device:
             (DeviceStatus.DOWN, DeviceStatus.UP): "down_to_up",
         }
         return transitions.get((old, new), "unknown")
+    
+    def get_down_since(self) -> Optional[datetime]:
+        """Return timestamp when device went down, or None if not down"""
+        if self._status == DeviceStatus.DOWN:
+            return self._down_since
+        return None
     
     def get_quality_report(self) -> Dict:
         """Get detailed quality report for this device"""
@@ -314,9 +342,3 @@ class Device:
             'max_latency_ms': self.max_latency_ms,
             'packet_loss_threshold': self.packet_loss_threshold
         }
-# Add this method to the Device class
-def get_down_since(self):
-    """Return timestamp when device went down, or None if not down"""
-    if self.status == DeviceStatus.DOWN and hasattr(self, 'down_since'):
-        return self.down_since
-    return None

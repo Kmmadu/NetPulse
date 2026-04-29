@@ -213,7 +213,7 @@ def run_monitoring_loop(user_id: int, interval: int):
                     # CORRECTED: process_status_change takes 3 arguments (device_id, old_status, new_status)
                     # The downtime and is_reachable are tracked internally by the alert service
                     alert_service.process_status_change(device_id, old_status, new_status)
-                    print(f"🔔 ALERT CALLED for {result.get("name")}")
+                    print(f"🔔 ALERT CALLED for {result.get('name')}")
         except Exception as e:
             print(f"Monitor error: {e}")
         

@@ -53,15 +53,20 @@ class QualityThresholds:
     jitter_poor: float = 50.0
     jitter_critical: float = 100.0
     
-    # Stability thresholds
-    stability_window: int = 10
+    # ============================================================
+    # FIXED: Reduced stability thresholds for faster transitions
+    # Previously: stability_window=10, max_state_changes=3,
+    #            consecutive_failures_threshold=3, required_consistent_samples=3
+    # Now: Reduced to allow faster response to actual failures
+    # ============================================================
+    stability_window: int = 5                    # Reduced from 10
     max_state_changes: int = 3
-    consecutive_failures_threshold: int = 3
-    required_consistent_samples: int = 3
+    consecutive_failures_threshold: int = 2      # Reduced from 3
+    required_consistent_samples: int = 2         # Reduced from 3
     
     # Sample confidence
-    min_confidence_samples: int = 5
-    full_confidence_samples: int = 20
+    min_confidence_samples: int = 3              # Reduced from 5
+    full_confidence_samples: int = 10            # Reduced from 20
     
     # Scoring weights (must sum to 1.0)
     weight_packet_loss: float = 0.35
@@ -103,7 +108,7 @@ class QualityMetrics:
 class StateTracker:
     """Tracks device state changes for flapping detection"""
     
-    def __init__(self, window_size: int = 10):
+    def __init__(self, window_size: int = 5):  # Changed default from 10 to 5
         self.history: deque = deque(maxlen=window_size)
         self._pending_status: Optional[str] = None
         self._stability_counter: int = 0
@@ -126,8 +131,13 @@ class StateTracker:
                 changes += 1
         return changes
     
-    def should_change_status(self, proposed_status: str, required_cycles: int = 3) -> bool:
-        """Determine if status should change based on stability requirements."""
+    def should_change_status(self, proposed_status: str, required_cycles: int = 2) -> bool:
+        """
+        Determine if status should change based on stability requirements.
+        
+        FIXED: Reduced required_cycles from 3 to 2 for faster transitions.
+        This allows status changes to happen after 2 consistent samples instead of 3.
+        """
         if proposed_status == self._pending_status:
             self._stability_counter += 1
             if self._stability_counter >= required_cycles:
@@ -487,8 +497,12 @@ class LinkQualityAnalyzer:
         
         return result
     
-    def should_transition(self, proposed_level: str, required_cycles: int = 3) -> bool:
-        """Determine if status should transition based on stability requirements."""
+    def should_transition(self, proposed_level: str, required_cycles: int = 2) -> bool:
+        """
+        Determine if status should transition based on stability requirements.
+        
+        FIXED: Reduced required_cycles default from 3 to 2 for faster response.
+        """
         return self.state_tracker.should_change_status(proposed_level, required_cycles)
     
     def is_flapping(self) -> bool:

@@ -6,10 +6,12 @@ Simple Monitoring Engine - With Parallel Execution
 import time
 import subprocess
 import re
+import json
+import os
+import sqlite3
 from datetime import datetime
 from typing import Dict, Optional, List
 import sys
-import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
@@ -26,6 +28,7 @@ class MonitoringEngine:
     
     def __init__(self, db_path: str = "data/monitor.db", user_id: int = None, max_workers: int = 10):
         self.db = Database(db_path)
+        self.db_path = db_path
         self.devices: Dict[str, Device] = {}
         self.user_id = user_id
         self.max_workers = max_workers
@@ -36,6 +39,138 @@ class MonitoringEngine:
         self._last_alert_state: Dict[str, str] = {}      # device_id -> last alerted status (UP/DOWN/DEGRADED)
         self._last_alert_time: Dict[str, float] = {}     # device_id -> timestamp of last alert
         self.alert_cooldown = 600  # 10 minutes cooldown in seconds
+        
+        # Track initial alerts sent on startup
+        self._initial_alert_sent: Dict[str, bool] = {}
+        self._load_initial_alert_state()
+        self._ensure_initial_alert_column()
+        
+        # Run initial state check BEFORE normal monitoring starts
+        self._run_initial_state_check()
+    
+    def _ensure_initial_alert_column(self):
+        """Ensure devices table has initial_alert_sent column"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(devices)")
+                columns = [col[1] for col in cursor.fetchall()]
+                if 'initial_alert_sent' not in columns:
+                    cursor.execute("ALTER TABLE devices ADD COLUMN initial_alert_sent INTEGER DEFAULT 0")
+                    print("✅ Added initial_alert_sent column to devices table")
+        except Exception as e:
+            print(f"⚠️ Failed to add initial_alert_sent column: {e}")
+    
+    def _get_alert_state_file_path(self) -> str:
+        """Get path to the alert state persistence file"""
+        return f"data/alert_state_user_{self.user_id}.json" if self.user_id else "data/alert_state.json"
+    
+    def _load_initial_alert_state(self):
+        """Load persisted alert state to avoid duplicate alerts across restarts"""
+        state_file = self._get_alert_state_file_path()
+        if os.path.exists(state_file):
+            try:
+                with open(state_file, 'r') as f:
+                    data = json.load(f)
+                    self._initial_alert_sent = data.get('initial_alerts', {})
+                    self._last_alert_state = data.get('last_alert_state', {})
+                    self._last_alert_time = data.get('last_alert_time', {})
+                print(f"📂 Loaded alert state from {state_file}")
+            except Exception as e:
+                print(f"⚠️ Failed to load alert state: {e}")
+    
+    def _save_alert_state(self):
+        """Persist alert state to survive restarts"""
+        state_file = self._get_alert_state_file_path()
+        try:
+            os.makedirs(os.path.dirname(state_file), exist_ok=True)
+            with open(state_file, 'w') as f:
+                json.dump({
+                    'initial_alerts': self._initial_alert_sent,
+                    'last_alert_state': self._last_alert_state,
+                    'last_alert_time': self._last_alert_time,
+                    'saved_at': datetime.now().isoformat()
+                }, f)
+        except Exception as e:
+            print(f"⚠️ Failed to save alert state: {e}")
+    
+    def _run_initial_state_check(self):
+        """
+        Run a single initial check to evaluate device states on startup.
+        This bypasses stability checks to detect DOWN devices immediately.
+        """
+        if not self.devices:
+            print("⚠️ No devices to check during initial state")
+            return
+        
+        print("\n" + "="*60)
+        print("🔍 INITIAL STATE CHECK - Evaluating device status")
+        print("="*60)
+        
+        for device_id, device in self.devices.items():
+            # Skip if initial alert already sent (from previous run)
+            if self._initial_alert_sent.get(device_id, False):
+                continue
+            
+            # Check if device has already been alerted in database
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT initial_alert_sent FROM devices WHERE device_id = ?", (device_id,))
+                    row = cursor.fetchone()
+                    if row and row[0] == 1:
+                        self._initial_alert_sent[device_id] = True
+                        continue
+            except Exception as e:
+                print(f"⚠️ Failed to check initial_alert_sent for {device_id}: {e}")
+            
+            print(f"\n📡 Checking device: {device.name} ({device.ip_address})")
+            
+            # Perform ping check
+            ping_result = self.ping(device.ip_address, device.timeout, count=3)
+            
+            # Process with initial check flag = True (bypasses stability)
+            result = device.process_check(
+                ping_result['is_reachable'],
+                ping_result['latency_ms'],
+                is_initial_check=True
+            )
+            
+            # If device is DOWN, this will trigger an alert
+            if result.get('status_changed') and result['current_status'] == 'DOWN':
+                print(f"⚠️ Device {device.name} is DOWN - sending initial alert")
+                
+                # Send alert through normal flow
+                self._handle_status_change_alert(
+                    device_id=device_id,
+                    old_status=result.get('previous_status', 'UNKNOWN'),
+                    new_status=result['current_status'],
+                    is_reachable=ping_result['is_reachable']
+                )
+                
+                # Mark as alerted in database
+                try:
+                    with sqlite3.connect(self.db_path) as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("UPDATE devices SET initial_alert_sent = 1 WHERE device_id = ?", (device_id,))
+                except Exception as e:
+                    print(f"⚠️ Failed to update initial_alert_sent: {e}")
+            elif result['current_status'] == 'UP':
+                print(f"✅ Device {device.name} is UP")
+            elif result['current_status'] == 'DEGRADED':
+                print(f"⚠️ Device {device.name} is DEGRADED (no initial alert)")
+            
+            # Mark as processed
+            self._initial_alert_sent[device_id] = True
+            
+            # Small delay between initial checks to avoid overwhelming
+            time.sleep(0.5)
+        
+        # Save state after processing
+        self._save_alert_state()
+        print("\n" + "="*60)
+        print("✅ INITIAL STATE CHECK COMPLETE")
+        print("="*60 + "\n")
     
     def _handle_status_change_alert(self, device_id: str, old_status: str, new_status: str, 
                                      is_reachable: bool = None):
@@ -51,7 +186,6 @@ class MonitoringEngine:
         
         # Skip if same state and within cooldown period
         if last_state == new_status and (current_time - last_time) < self.alert_cooldown:
-            # Try to get device name for logging
             device_name = device_id
             for dev in self.devices.values():
                 if dev.device_id == device_id:
@@ -65,11 +199,23 @@ class MonitoringEngine:
                 alert_service = AlertServiceV2()
                 alert_service.process_status_change(device_id, old_status, new_status, is_reachable)
                 
+                # ============================================================
+                # CRITICAL: Sync database state with in-memory state
+                # This ensures down_since is persisted across restarts
+                # ============================================================
+                for dev in self.devices.values():
+                    if dev.device_id == device_id:
+                        down_since = dev._down_since if new_status == "DOWN" else None
+                        self.db.sync_device_state(device_id, new_status, down_since)
+                        break
+                
                 # Update tracking after successful alert
                 self._last_alert_state[device_id] = new_status
                 self._last_alert_time[device_id] = current_time
                 
-                # Get device name for logging
+                # Save state after each alert
+                self._save_alert_state()
+                
                 device_name = device_id
                 for dev in self.devices.values():
                     if dev.device_id == device_id:
@@ -90,7 +236,6 @@ class MonitoringEngine:
                 user_devices = auth.get_user_devices(self.user_id)
                 
                 for device_data in user_devices:
-                    # Remove device_group parameter as it's not in Device __init__
                     device = Device(
                         device_id=device_data['device_id'],
                         name=device_data['name'],
@@ -128,7 +273,7 @@ class MonitoringEngine:
         Advanced ping with multiple packets for accuracy.
         Returns: {
             'is_reachable': bool,
-            'latency_ms': float,  # average latency
+            'latency_ms': float,
             'min_latency_ms': float,
             'max_latency_ms': float,
             'packet_loss_percent': float,
@@ -161,7 +306,6 @@ class MonitoringEngine:
             if attempt < count - 1:
                 time.sleep(0.2)
         
-        # Calculate metrics
         packet_loss = ((count - success_count) / count) * 100.0
         
         result = {
@@ -188,16 +332,24 @@ class MonitoringEngine:
         try:
             ping_result = self.ping(device.ip_address, device.timeout, count=3)
             
-            # Use average latency for state machine
+            # Capture before status for debugging
+            before_status = device.status.value if device.status else "UNKNOWN"
+            
+            # Normal check (not initial) - stability logic applies
             result = device.process_check(ping_result['is_reachable'], ping_result['latency_ms'])
             
-            # SINGLE SOURCE OF TRUTH: Use ONLY result["status_changed"] from device.process_check()
+            after_status = result['current_status']
+            
+            # Log status changes for debugging
+            if before_status != after_status:
+                print(f"[STATUS_CHANGE] {device.name}: {before_status} → {after_status} (changed={result.get('status_changed', False)})", flush=True)
+            
             if result.get('status_changed', False):
-                # Get old status from result (device.process_check tracks this internally)
                 old_status = result.get('previous_status', 'UNKNOWN')
                 new_status = result['current_status']
                 
-                # Pass full context to alert handler including is_reachable for false positive prevention
+                print(f"[ALERT_CALL] Calling alert service for {device.name}: {old_status} → {new_status}", flush=True)
+                
                 self._handle_status_change_alert(
                     device_id=device.device_id,
                     old_status=old_status,
@@ -205,7 +357,6 @@ class MonitoringEngine:
                     is_reachable=ping_result['is_reachable']
                 )
             
-            # Add detailed metrics to result
             result['ping_details'] = {
                 'min_latency_ms': ping_result['min_latency_ms'],
                 'max_latency_ms': ping_result['max_latency_ms'],
@@ -213,7 +364,6 @@ class MonitoringEngine:
                 'jitter_ms': ping_result['jitter_ms']
             }
             
-            # Log to database
             try:
                 self.db.add_log(result)
                 if result.get('status_changed'):
@@ -295,10 +445,7 @@ class MonitoringEngine:
                 print(f"\n📡 Cycle #{cycle} @ {datetime.now().strftime('%H:%M:%S')}")
                 print("-" * 40)
                 
-                # Check all devices in parallel
                 results = self.check_all_devices()
-                
-                # Sort and display results
                 results.sort(key=lambda x: x.get('name', ''))
                 
                 for result in results:
@@ -321,7 +468,6 @@ class MonitoringEngine:
                 
                 elapsed = time.time() - start
                 
-                # Warn if cycle exceeded interval
                 if elapsed > interval:
                     print(f"⚠️  Cycle exceeded interval by {elapsed - interval:.2f}s")
                 else:
@@ -349,6 +495,20 @@ class MonitoringEngine:
             print(f"✅ Alert cooldown set to {seconds} seconds")
         else:
             print(f"⚠️ Invalid cooldown value: {seconds}")
+    
+    def reset_alert_state(self):
+        """Reset alert state for all devices (useful for testing)"""
+        self._initial_alert_sent = {}
+        self._last_alert_state = {}
+        self._last_alert_time = {}
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE devices SET initial_alert_sent = 0")
+        except Exception as e:
+            print(f"⚠️ Failed to reset database state: {e}")
+        self._save_alert_state()
+        print("✅ Alert state reset")
     
     def get_devices(self) -> list:
         """Get all devices"""

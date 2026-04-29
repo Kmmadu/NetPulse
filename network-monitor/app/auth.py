@@ -56,6 +56,25 @@ class UserAuth:
                 );
             """)
     
+    def _sync_to_devices_table(self, device_id: str, name: str, ip_address: str):
+        """Sync device to the main devices table (for foreign key constraints)"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                # Ensure status column exists
+                cursor.execute("PRAGMA table_info(devices)")
+                columns = [col[1] for col in cursor.fetchall()]
+                if 'status' not in columns:
+                    cursor.execute("ALTER TABLE devices ADD COLUMN status TEXT DEFAULT 'UNKNOWN'")
+                
+                # Insert or update device
+                cursor.execute("""
+                    INSERT OR REPLACE INTO devices (device_id, name, ip_address, status, updated_at)
+                    VALUES (?, ?, ?, 'UNKNOWN', CURRENT_TIMESTAMP)
+                """, (device_id, name, ip_address))
+        except Exception as e:
+            print(f"⚠️ Failed to sync device to devices table: {e}")
+    
     def _hash_password(self, password: str) -> str:
         """Hash password with salt"""
         salt = secrets.token_hex(16)
@@ -121,7 +140,17 @@ class UserAuth:
                 "SELECT * FROM user_devices WHERE user_id = ? ORDER BY device_group, name",
                 (user_id,)
             )
-            return [dict(row) for row in cursor.fetchall()]
+            devices = [dict(row) for row in cursor.fetchall()]
+            
+            # Ensure all devices are synced to devices table
+            for device in devices:
+                self._sync_to_devices_table(
+                    device['device_id'],
+                    device['name'],
+                    device['ip_address']
+                )
+            
+            return devices
     
     def get_user_groups(self, user_id: int) -> list:
         """Get all groups for a user"""
@@ -155,6 +184,10 @@ class UserAuth:
                     INSERT INTO user_devices (user_id, device_id, name, ip_address, device_group)
                     VALUES (?, ?, ?, ?, ?)
                 """, (user_id, device_id, name, ip, group))
+            
+            # Sync to devices table
+            self._sync_to_devices_table(device_id, name, ip)
+            
             return device_id
         except sqlite3.IntegrityError:
             return None
@@ -163,6 +196,18 @@ class UserAuth:
         """Update user device"""
         updates = []
         values = []
+        
+        # Get current device info first
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT name, ip_address FROM user_devices WHERE user_id = ? AND device_id = ?",
+                (user_id, device_id)
+            )
+            current = cursor.fetchone()
+            current_name = current['name'] if current else None
+            current_ip = current['ip_address'] if current else None
         
         if name:
             updates.append("name = ?")
@@ -187,7 +232,16 @@ class UserAuth:
                 SET {', '.join(updates)} 
                 WHERE user_id = ? AND device_id = ?
             """, values)
-            return cursor.rowcount > 0
+            success = cursor.rowcount > 0
+        
+        if success:
+            # Sync updated info to devices table
+            final_name = name if name else current_name
+            final_ip = ip if ip else current_ip
+            if final_name and final_ip:
+                self._sync_to_devices_table(device_id, final_name, final_ip)
+        
+        return success
     
     def delete_user_device(self, user_id: int, device_id: str) -> bool:
         """Delete user device"""

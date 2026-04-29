@@ -500,12 +500,19 @@ NetPulse Network Monitoring
         self._send_email(subject, body.strip())
         self._update_alert_timestamp(device_id, "erratic")
     
-    def process_status_change(self, device_id: str, old_status: str, new_status: str):
+    def process_status_change(self, device_id: str, old_status: str, new_status: str, is_reachable: bool = None):
         """
         Main entry point - called when device status changes.
         Event-driven logic - only 3 alert types.
+        
+        CRITICAL: Only triggers on actual state changes (old_status != new_status)
         """
         if not self._enabled:
+            return
+        
+        # CRITICAL FIX: Only process if status actually changed
+        if old_status == new_status:
+            print(f"[ALERT_DEBUG] Skipping - no status change for {device_id}: {old_status} == {new_status}", flush=True)
             return
         
         # Record status for history
@@ -517,11 +524,11 @@ NetPulse Network Monitoring
             print(f"⚠️ Device not found: {device_id}")
             return
         
-        print(f"🔵 Processing status change: {device['name']} - {old_status} → {new_status}")
+        print(f"[ALERT_DEBUG] Processing: {device['name']} - {old_status} → {new_status} (reachable={is_reachable})", flush=True)
         
-        # Case 1: Device went DOWN
+        # Case 1: Device went DOWN (any state → DOWN)
         if new_status == "DOWN" and old_status != "DOWN":
-            print(f"🔴 Device {device['name']} is DOWN - sending alert")
+            print(f"[ALERT_TRIGGER] 🔴 Device {device['name']} is DOWN - sending alert", flush=True)
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
@@ -530,7 +537,7 @@ NetPulse Network Monitoring
             
             self.send_down_alert(device_id, device['name'], device['ip_address'])
         
-        # Case 2: Device recovered from DOWN
+        # Case 2: Device recovered from DOWN (DOWN → UP or DOWN → DEGRADED)
         elif old_status == "DOWN" and new_status != "DOWN":
             down_since = device.get('down_since')
             downtime_seconds = 0
@@ -538,7 +545,7 @@ NetPulse Network Monitoring
             if down_since:
                 down_time = datetime.fromisoformat(down_since)
                 downtime_seconds = int((datetime.now() - down_time).total_seconds())
-                print(f"🟢 Device {device['name']} recovered after {downtime_seconds} seconds")
+                print(f"[ALERT_TRIGGER] 🟢 Device {device['name']} recovered after {downtime_seconds} seconds", flush=True)
                 
                 with self._get_connection() as conn:
                     cursor = conn.cursor()
@@ -548,9 +555,9 @@ NetPulse Network Monitoring
             
             self.send_recovery_alert(device_id, device['name'], device['ip_address'], downtime_seconds)
         
-        # Case 3: Check for erratic behavior
+        # Case 3: Check for erratic behavior (flapping detection)
         if self._is_erratic(device_id):
-            print(f"⚠️ Device {device['name']} is erratic")
+            print(f"[ALERT_TRIGGER] ⚠️ Device {device['name']} is erratic", flush=True)
             self.send_erratic_alert(device_id, device['name'], device['ip_address'])
     
     def send_test_alert(self) -> bool:

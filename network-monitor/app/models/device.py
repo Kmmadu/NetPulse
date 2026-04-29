@@ -57,6 +57,7 @@ class Device:
         self._degraded_since = None
         self._last_quality = None
         self._status_history = []  # Track status changes for stability
+        self._initial_alert_sent = False  # Track if initial alert was sent
         
         # Rolling window for quality metrics
         self._latency_samples: List[float] = []
@@ -109,6 +110,16 @@ class Device:
         if self._last_quality:
             return self._last_quality.get('quality_level')
         return None
+    
+    @property
+    def initial_alert_sent(self) -> bool:
+        """Check if initial alert has been sent"""
+        return self._initial_alert_sent
+    
+    @initial_alert_sent.setter
+    def initial_alert_sent(self, value: bool):
+        """Set initial alert sent status"""
+        self._initial_alert_sent = value
     
     def is_suboptimal(self) -> Dict:
         """Check if the link is suboptimal"""
@@ -171,8 +182,17 @@ class Device:
             return None
         return statistics.stdev(self._latency_samples)
     
-    def process_check(self, is_reachable: bool, latency: Optional[float]) -> Dict:
-        """Process a ping result with quality analysis"""
+    def process_check(self, is_reachable: bool, latency: Optional[float], 
+                      is_initial_check: bool = False) -> Dict:
+        """
+        Process a ping result with quality analysis.
+        
+        Args:
+            is_reachable: Whether the device responded to ping
+            latency: Response latency in milliseconds
+            is_initial_check: If True, bypass stability check for DOWN detection
+                             (used for initial state evaluation on startup)
+        """
         old_status = self._status
         self._last_check = datetime.now()
         self._last_latency = latency if is_reachable else None
@@ -214,21 +234,23 @@ class Device:
                 quality_level = quality['quality_level']
         
         # ============================================================
-        # STATUS DETERMINATION LOGIC
+        # STATUS DETERMINATION LOGIC - PRODUCTION STABLE
         # ============================================================
         # DOWN: Device is NOT reachable AND retry threshold met
-        #   - Packet loss and latency do NOT trigger DOWN
         #   - A reachable device is NEVER marked as DOWN
         #
-        # DEGRADED: Device IS reachable AND (packet_loss >= 10% OR quality is not "Good")
+        # UP: Reachable AND packet_loss < 10% AND quality_level == "Good"
         #
-        # UP: Device IS reachable AND packet_loss < 10% AND quality_level == "Good"
+        # DEGRADED: Reachable but has quality issues
+        #   - packet_loss >= 10% OR quality_level != "Good"
         #
         # UNKNOWN/Previous: Not reachable but retry count not yet met
         # ============================================================
         
+        # Capture before status for debugging
+        before_status = self._status.value if self._status else "UNKNOWN"
+        
         # Rule 1: DOWN - Complete connectivity failure only
-        # A reachable device is NEVER marked as DOWN
         if not is_reachable and self._fail_count >= self.retry_count:
             proposed_status = DeviceStatus.DOWN
         
@@ -237,7 +259,6 @@ class Device:
             proposed_status = DeviceStatus.UP
         
         # Rule 3: DEGRADED - Reachable but has quality issues
-        # This includes: packet_loss >= 10% OR quality_level != "Good"
         elif is_reachable:
             proposed_status = DeviceStatus.DEGRADED
         
@@ -245,26 +266,45 @@ class Device:
         else:
             proposed_status = self._status
         
+        # Log status proposal for debugging
+        if before_status != proposed_status.value:
+            print(f"[STATUS] {self.name}: {before_status} → {proposed_status.value} (pending)", flush=True)
+        
+        # Determine if status actually changed
+        status_changed = (proposed_status != self._status)
+        
         # Apply stability check to prevent flapping
-        if self.quality_analyzer.should_transition(proposed_status.value):
-            status_changed = True
+        should_transition = self.quality_analyzer.should_transition(proposed_status.value)
+        
+        # Special handling for initial check: if device is DOWN, force transition
+        if is_initial_check and proposed_status == DeviceStatus.DOWN:
+            should_transition = True
+            print(f"[INITIAL] {self.name}: Forcing DOWN transition", flush=True)
+        
+        # Log stability block
+        if status_changed and not should_transition:
+            print(f"[STABILITY] {self.name}: Transition to {proposed_status.value} blocked", flush=True)
+        
+        if status_changed and should_transition:
             old_status_for_tracking = self._status
             self._status = proposed_status
+            print(f"[TRANSITION] {self.name}: {old_status_for_tracking.value} → {self._status.value}", flush=True)
             
-            # Track start times - IMPORTANT: Only set when transitioning INTO a state
+            # Track start times - ONLY when transitioning INTO a state
             if self._status == DeviceStatus.DOWN and old_status_for_tracking != DeviceStatus.DOWN:
                 # Just entered DOWN state - record start time
                 self._down_since = self._last_check
                 self._degraded_since = None
+                print(f"[DOWN] {self.name} entered DOWN state at {self._down_since}", flush=True)
             elif self._status == DeviceStatus.DEGRADED and old_status_for_tracking != DeviceStatus.DEGRADED:
                 # Just entered DEGRADED state - record start time
                 self._degraded_since = self._last_check
                 self._down_since = None
+                print(f"[DEGRADED] {self.name} entered DEGRADED state at {self._degraded_since}", flush=True)
             elif self._status in [DeviceStatus.UP, DeviceStatus.UNKNOWN]:
                 # Exiting DOWN or DEGRADED - clear timers
                 self._down_since = None
                 self._degraded_since = None
-            # If status hasn't changed, keep existing timers (don't reset!)
         else:
             status_changed = False
         
@@ -280,6 +320,7 @@ class Device:
             'retry_count': self.retry_count,
             'current_status': self._status.value,
             'status_changed': status_changed,
+            'previous_status': old_status.value if old_status else "UNKNOWN",
             'transition_type': self._get_transition(old_status, self._status) if status_changed else None,
             'downtime_seconds': self.downtime_seconds,
             'degraded_seconds': self.degraded_seconds,
@@ -287,7 +328,8 @@ class Device:
             'avg_latency_ms': self._calculate_avg_latency(),
             'sample_count': len(self._success_samples),
             'quality': quality,
-            'suboptimal': self.get_suboptimal_report()
+            'suboptimal': self.get_suboptimal_report(),
+            'is_initial_check': is_initial_check
         }
         
         return result

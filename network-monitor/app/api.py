@@ -16,6 +16,7 @@ import secrets
 import sqlite3
 from datetime import datetime
 from typing import List, Optional
+from enum import Enum
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -210,10 +211,7 @@ def run_monitoring_loop(user_id: int, interval: int):
                     new_status = result.get('current_status', 'UNKNOWN')
                     device_id = result.get('device_id')
                     print(f"[Monitor] Status changed for {result.get('name')}: {old_status} → {new_status}")
-                    # CORRECTED: process_status_change takes 3 arguments (device_id, old_status, new_status)
-                    # The downtime and is_reachable are tracked internally by the alert service
                     alert_service.process_status_change(device_id, old_status, new_status)
-                    print(f"🔔 ALERT CALLED for {result.get('name')}")
         except Exception as e:
             print(f"Monitor error: {e}")
         
@@ -420,16 +418,55 @@ async def update_user_device(token: str, device_id: str, name: str = None, ip: s
     user_id = _sessions[token]
     auth = UserAuth()
     
+    # Get old device info before update
+    engine = get_engine_for_user(user_id)
+    old_ip = None
+    old_status = "UNKNOWN"
+    
+    if device_id in engine.devices:
+        old_ip = engine.devices[device_id].ip_address
+        old_status = engine.devices[device_id].status.value if engine.devices[device_id].status else "UNKNOWN"
+    
     if auth.update_user_device(user_id, device_id, name, ip, group):
-        engine = get_engine_for_user(user_id)
         if device_id in engine.devices:
             device = engine.devices[device_id]
+            
+            # Track what changed
+            ip_changed = ip is not None and old_ip != ip
+            
             if name:
                 device.name = name
             if ip:
                 device.ip_address = ip
             if group:
                 device.device_group = group
+            
+            # CRITICAL FIX: If IP changed, reset device state to force re-evaluation
+            if ip_changed:
+                print(f"\n[API] 🔄 IP changed for {device.name}: {old_ip} → {ip}")
+                print(f"[API] Old status was {old_status}, resetting device state")
+                
+                # Reset device state
+                device._fail_count = 0
+                device._status = DeviceStatus.UNKNOWN
+                device._down_since = None
+                device._degraded_since = None
+                device._initial_alert_sent = False
+                
+                # Also clear in database
+                try:
+                    with sqlite3.connect("data/monitor.db") as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            UPDATE devices 
+                            SET status = 'UNKNOWN', down_since = NULL, initial_alert_sent = 0
+                            WHERE device_id = ?
+                        """, (device_id,))
+                        conn.commit()
+                    print(f"[API] ✅ Reset database state for {device.name}")
+                except Exception as e:
+                    print(f"[API] ⚠️ Failed to reset device in DB: {e}")
+        
         return {"success": True, "message": "Device updated"}
     return {"success": False, "error": "Device not found"}
 

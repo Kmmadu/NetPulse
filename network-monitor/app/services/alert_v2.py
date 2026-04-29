@@ -51,6 +51,10 @@ class AlertServiceV2:
         self.recovery_cooldown_minutes = int(os.getenv('ALERT_RECOVERY_COOLDOWN', '5'))
         self.erratic_cooldown_minutes = int(os.getenv('ALERT_ERRATIC_COOLDOWN', '30'))
         
+        # Flapping suppression settings
+        self.flapping_suppression_minutes = int(os.getenv('ALERT_FLAPPING_SUPPRESSION', '60'))
+        self._flapping_suppressed_until: Dict[str, datetime] = {}
+        
         # Debug: Print configuration status
         print("\n" + "="*50)
         print("📧 Alert Service V2 - Configuration Debug")
@@ -66,6 +70,7 @@ class AlertServiceV2:
         print(f"⏱️ DOWN_COOLDOWN: {self.down_cooldown_minutes} min")
         print(f"⏱️ RECOVERY_COOLDOWN: {self.recovery_cooldown_minutes} min")
         print(f"⏱️ ERRATIC_COOLDOWN: {self.erratic_cooldown_minutes} min")
+        print(f"⏱️ FLAPPING_SUPPRESSION: {self.flapping_suppression_minutes} min")
         print("="*50 + "\n")
         
         # Check if alerts are enabled by config
@@ -472,26 +477,40 @@ NetPulse Network Monitoring
         self._update_alert_timestamp(device_id, "recovery")
     
     def send_erratic_alert(self, device_id: str, device_name: str, device_ip: str):
-        """Send ERRATIC behavior warning (flapping detection)"""
+        """Send ERRATIC behavior warning (flapping detection) with suppression"""
         if not self._should_send_alert(device_id, "erratic", self.erratic_cooldown_minutes):
             return
         
+        # Set suppression for this device to prevent alert storm
+        self._flapping_suppressed_until[device_id] = datetime.now() + timedelta(minutes=self.flapping_suppression_minutes)
+        print(f"[SUPPRESS] Device {device_name} is flapping - suppressing further DOWN/RECOVERY alerts for {self.flapping_suppression_minutes} minutes", flush=True)
+        
         timestamp = datetime.now().strftime("%I:%M %p").lstrip('0')
         
-        subject = f"[NetPulse] ⚠️ Unstable Device – {device_name}"
+        subject = f"[NetPulse] ⚠️ Unstable Device – {device_name} (Alerts Suppressed)"
         
         body = f"""
 Device: {device_name}
 
-Status: UNSTABLE
+Status: UNSTABLE / FLAPPING
 
 This device has been going up and down repeatedly in a short time.
 
-This may indicate:
+WHAT THIS MEANS:
+The device is unstable - it keeps disconnecting and reconnecting. 
 
+This may indicate:
 • Unstable network connection
 • Power issues
 • Hardware problems
+
+WHAT WE ARE DOING:
+To prevent alert fatigue, we are temporarily suppressing further DOWN/RECOVERY 
+alerts for this device for the next {self.flapping_suppression_minutes} minutes.
+
+If the condition persists, we will send a summary update.
+
+Time detected: {timestamp}
 
 ---
 NetPulse Network Monitoring
@@ -514,6 +533,16 @@ NetPulse Network Monitoring
         if old_status == new_status:
             print(f"[ALERT_DEBUG] Skipping - no status change for {device_id}: {old_status} == {new_status}", flush=True)
             return
+        
+        # Check if alerts are suppressed due to flapping
+        if device_id in self._flapping_suppressed_until:
+            if datetime.now() < self._flapping_suppressed_until[device_id]:
+                print(f"[SUPPRESS] Skipping {new_status} alert for {device_id} - device is in flapping suppression period", flush=True)
+                return
+            else:
+                # Suppression expired, remove from tracking
+                del self._flapping_suppressed_until[device_id]
+                print(f"[SUPPRESS] Suppression period ended for {device_id}", flush=True)
         
         # Record status for history
         self._record_status_history(device_id, new_status)
@@ -556,8 +585,9 @@ NetPulse Network Monitoring
             self.send_recovery_alert(device_id, device['name'], device['ip_address'], downtime_seconds)
         
         # Case 3: Check for erratic behavior (flapping detection)
-        if self._is_erratic(device_id):
-            print(f"[ALERT_TRIGGER] ⚠️ Device {device['name']} is erratic", flush=True)
+        # Only check if not already suppressed
+        if device_id not in self._flapping_suppressed_until and self._is_erratic(device_id):
+            print(f"[ALERT_TRIGGER] ⚠️ Device {device['name']} is erratic - sending suppression alert", flush=True)
             self.send_erratic_alert(device_id, device['name'], device['ip_address'])
     
     def send_test_alert(self) -> bool:

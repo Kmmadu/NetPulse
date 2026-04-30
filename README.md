@@ -45,91 +45,198 @@ chmod +x install.sh
 ```
 
 ---
+## Manual Installation
 
-## ⚙️ Installation
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/Kmmadu/netpulse.git
-cd netpulse
 ```
+# Clone repository
+git clone https://github.com/Kmmadu/NetPulse.git
+cd NetPulse
 
-### 2. Create virtual environment
-
-```bash
+# Create virtual environment
 python3 -m venv venv
-source venv/bin/activate  # Linux/macOS
-venv\Scripts\activate     # Windows
-```
+source venv/bin/activate
 
-### 3. Install dependencies
-
-```bash
+# Install dependencies
 pip install -r requirements.txt
+
+# Setup environment variables
+cp .env.example .env
+nano .env
+
+# Start API
+python api_run.py
+
+# Start frontend
+cd web
+python3 -m http.server 8080
+```
+---
+
+## Configuration
+
+### Edit .env:
+
+# SMTP Configuration
+SMTP_SERVER=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=your-email@gmail.com
+SMTP_PASSWORD=your-app-password
+SMTP_FROM=your-email@gmail.com
+SMTP_TO=alerts@yourdomain.com
+
+# Alerts
+ALERTS_ENABLED=true
+ALERT_DOWN_COOLDOWN=5
+ALERT_RECOVERY_COOLDOWN=5
+ALERT_ERRATIC_COOLDOWN=30
+
+# Feature Flags
+PREMIUM_MODE=false
+
+---
+
+## Gmail Setup (App Password)
+
+1. Enable 2-Factor Authentication
+2. Visit: https://myaccount.google.com/apppasswords
+3. Generate an App Password
+4. Use it as SMTP_PASSWORD
+
+---
+
+## Service Management (Systemd)
+
+```
+# Check status
+sudo systemctl status netpulse-api netpulse-monitor
+
+# View logs
+sudo journalctl -u netpulse-api -f
+
+# Restart
+sudo systemctl restart netpulse-api netpulse-monitor
+
+# Stop
+sudo systemctl stop netpulse-api netpulse-monitor
+
+```
+---
+
+## Backup & Restore
+
+```
+# Manual backup
+./scripts/backup.sh
+
+# Backups stored in:
+./backups/
+
+# Automatic backup runs daily (cron)
+
+```
+---
+
+## Email Alert Examples
+
+### Device Down
+
+Subject: [NetPulse] Device Down – Core Router
+
+Device: Core Router
+IP Address: 10.0.0.1
+Status: DOWN
+Time: 10:32 PM
+
+### Device Recovery
+
+Subject: [NetPulse] Device Restored – Core Router
+
+Device: Core Router
+Status: ONLINE
+Recovered At: 10:37 PM
+Downtime: 5 minutes
+
+---
+
+## Project Structure
+
+```
+NetPulse/
+├── app/                  # Backend logic
+├── web/                  # Frontend UI
+├── data/                 # SQLite database
+├── logs/                 # Logs
+├── backups/              # Backups
+├── scripts/              # Utility scripts
+├── systemd/              # Service files
+├── .env.example
+├── requirements.txt
+├── install.sh
+└── README.md
+
+```
+---
+
+## Troubleshooting
+
+### API not starting
+
+```
+sudo fuser -k 8000/tcp
+sudo systemctl restart netpulse-api
 ```
 
----
-
-## ▶️ Usage
-
-Run the monitoring system:
-
-```bash
-python run.py
+### No email alerts
+```
+python -c "from app.services.alert_v2 import AlertServiceV2; AlertServiceV2().send_test_alert()"
 ```
 
-From the CLI, you can:
+### Devices stuck in UNKNOWN
 
-* Add devices
-* Remove devices
-* Update device settings
-* Start monitoring
+* Start monitoring from dashboard
+* Wait for first check cycle
 
----
-
-## 📊 Example Output
+### Check database
+```
+sqlite3 data/monitor.db "SELECT * FROM devices;"
 
 ```
-🟢 [21:48:29] Service Providers (10.x.x.x) - UP (Latency: 7.3ms)
-🔴 [21:48:31] Service Providers (10.x.x.x) - DOWN
+### Uninstall
+
 ```
+./uninstall.sh
+
+```
+### Roadmap
+
+* Availability reports (Premium)
+* Historical graphs
+* Slack/Teams notifications
+* SMS alerts
+* SNMP monitoring
+* Multi-location monitoring
+
+### Use Cases
+
+* ISP device monitoring
+* Network uptime tracking
+* Internal infrastructure monitoring
+* Lightweight alternative to PRTG/Zabbix
 
 ---
 
-## 🛠️ Roadmap
-
-* [ ] SQLite database integration
-* [ ] REST API (Flask/FastAPI)
-* [ ] Web dashboard (React or HTML/JS)
-* [ ] Email alert system
-* [ ] SNMP monitoring
-* [ ] Multi-network agent support
-
----
-
-## 🎯 Use Case
-
-NetPulse is ideal for:
-
-* ISPs monitoring internal infrastructure
-* Network engineers tracking link availability
-* Small teams needing simple monitoring tools
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Feel free to fork the repo and submit a pull request.
-
----
-
-## 📄 License
+## License
 
 MIT License
 
 ---
 
-## 👨‍💻 Author
+##  Author
 
-Built by Mmadubugwu Kingsley Obinna — Network Engineer & Builder 🚀
+Built by Mmadubugwu Kingsley Obinna — Network Engineer & Builder
+
+---
+
+## Support
+* Issues: GitHub Issues
+* Discussions: GitHub Discussions

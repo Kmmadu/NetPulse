@@ -1,30 +1,35 @@
-# 🌐 NetPulse
+# NetPulse - Network Monitoring System
 
-**NetPulse** is a lightweight, local network monitoring system designed for ISP and enterprise environments. It continuously monitors network devices using ICMP (ping), detects downtime, logs events, and provides a foundation for a web-based dashboard.
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.104-blue.svg)](https://fastapi.tiangolo.com)
 
----
-
-## 🚀 Features
-
-* 📡 Multi-device monitoring (private & public IPs)
-* 🔁 Retry logic to prevent false alerts
-* 🟢🔴 Real-time UP/DOWN status detection
-* 📝 Structured logging with timestamps and latency
-* ⚡ Continuous monitoring engine
-* 🧱 Modular architecture (ready for scaling)
-* 🌐 Future-ready for web dashboard integration
+**NetPulse** is a lightweight, self-hosted network monitoring system that alerts you via email when devices go down and when they come back up. It is designed for network engineers, ISPs, and IT teams who need a simple and reliable monitoring solution without heavy infrastructure.
 
 ---
 
-## 🧠 How It Works
+## Features
 
-NetPulse operates using a polling mechanism:
+| Feature | Description |
+|--------|------------|
+| Real-time Monitoring | Ping devices at configurable intervals |
+| Email Alerts | Instant notifications for DOWN and RECOVERY events |
+| Downtime Tracking | Calculates how long outages last |
+| Recovery Detection | Alerts when devices come back online |
+| Web Dashboard | View device status in a browser |
+| Smart Cooldown | Prevents alert spam |
+| Flapping Detection | Detects unstable devices |
 
-1. Devices are defined with IP, name, and retry settings
-2. The monitoring engine sends periodic ping requests
-3. Responses are analysed to determine device status
-4. Failures are tracked using retry logic
-5. Status changes (UP ↔ DOWN) are detected and logged
+---
+
+## How It Works
+
+1. Add devices (name + IP address)
+2. NetPulse continuously monitors them using ICMP (ping)
+3. Alerts are triggered only on meaningful state changes
+
+**Flow:**
+Device goes DOWN → Alert sent → Device recovers → Recovery alert with downtime
 
 ---
 

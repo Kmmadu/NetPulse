@@ -33,9 +33,6 @@ Device goes DOWN → Alert sent → Device recovers → Recovery alert with down
 
 ---
 
-
----
-
 ## Quick Start
 
 ### One-Command Install (Recommended)

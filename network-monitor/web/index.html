@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="NetPulse - Professional network monitoring system for modern infrastructure">
-    <title>NetPulse | Network Monitoring System</title>
+    <meta name="description" content="NetPulse - Network monitoring system that alerts you when devices go down and when they come back up. Simple, powerful, and free.">
+    <title>NetPulse | Keep Your Network Online</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body class="lp-body">
@@ -16,8 +16,8 @@
             </a>
 
             <div class="lp-nav-links">
+                <a href="#how-it-works">How It Works</a>
                 <a href="#features">Features</a>
-                <a href="#monitoring">Monitoring</a>
                 <a href="dashboard.html">Dashboard</a>
             </div>
 
@@ -34,23 +34,24 @@
             <div class="lp-container">
                 <div class="lp-hero-grid">
                     <div class="lp-hero-copy">
-                        <div class="lp-badge">Enterprise-Grade Monitoring</div>
+                        <div class="lp-badge">Simple. Powerful. Free.</div>
                         <h1>
-                            Modern Network
-                            <span class="lp-accent">Observability</span>
+                            Know instantly when your
+                            <span class="lp-accent">network goes down</span>
                         </h1>
                         <p class="lp-lead">
-                            Real-time visibility into your infrastructure. Detect and resolve issues before they impact your business.
+                            NetPulse monitors your devices and sends you an email the moment something goes offline. 
+                            No complex setup. No hidden costs. Just peace of mind.
                         </p>
 
                         <div class="lp-hero-actions">
-                            <a class="lp-btn lp-btn-primary lp-btn-lg" href="register.html">Start Free</a>
-                            <a class="lp-btn lp-btn-secondary lp-btn-lg" href="#features">Learn More</a>
+                            <a class="lp-btn lp-btn-primary lp-btn-lg" href="register.html">Start Monitoring Free</a>
+                            <a class="lp-btn lp-btn-secondary lp-btn-lg" href="#how-it-works">How It Works →</a>
                         </div>
 
                         <div class="lp-proof">
                             <div class="lp-proof-text">
-                                Trusted by engineering teams worldwide
+                                Instant alerts • Email notifications • Automatic recovery detection
                             </div>
                         </div>
                     </div>
@@ -60,36 +61,14 @@
                             <div class="lp-media-glow" aria-hidden="true"></div>
                             <div class="lp-media-card">
                                 <div class="lp-media-top">
-                                    <div class="lp-media-title">NETPULSE</div>
-                                    <div class="lp-media-subtitle">Live Telemetry</div>
+                                    <div class="lp-media-title">ALERT EXAMPLE</div>
+                                    <div class="lp-media-subtitle">What you'll receive</div>
                                 </div>
-                                <svg class="lp-media-chart" viewBox="0 0 600 280" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                                    <defs>
-                                        <linearGradient id="npLine" x1="0" y1="0" x2="1" y2="0">
-                                            <stop offset="0" stop-color="#4f8cff" />
-                                            <stop offset="1" stop-color="#56d7ff" />
-                                        </linearGradient>
-                                        <linearGradient id="npFill" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0" stop-color="#56d7ff" stop-opacity="0.35" />
-                                            <stop offset="1" stop-color="#56d7ff" stop-opacity="0" />
-                                        </linearGradient>
-                                    </defs>
-                                    <g opacity="0.35" stroke="#b5d7ff" stroke-width="1">
-                                        <line x1="40" y1="40" x2="560" y2="40" />
-                                        <line x1="40" y1="90" x2="560" y2="90" />
-                                        <line x1="40" y1="140" x2="560" y2="140" />
-                                        <line x1="40" y1="190" x2="560" y2="190" />
-                                        <line x1="40" y1="240" x2="560" y2="240" />
-                                    </g>
-                                    <path d="M40 210 C 90 190, 120 210, 160 170 C 205 130, 235 185, 280 150 C 320 120, 350 170, 390 140 C 430 110, 470 120, 520 80 C 535 68, 548 62, 560 55 L 560 250 L 40 250 Z" fill="url(#npFill)" />
-                                    <path d="M40 210 C 90 190, 120 210, 160 170 C 205 130, 235 185, 280 150 C 320 120, 350 170, 390 140 C 430 110, 470 120, 520 80 C 535 68, 548 62, 560 55" fill="none" stroke="url(#npLine)" stroke-width="4" stroke-linecap="round" />
-                                    <g fill="#56d7ff">
-                                        <circle cx="160" cy="170" r="5" />
-                                        <circle cx="280" cy="150" r="5" />
-                                        <circle cx="390" cy="140" r="5" />
-                                        <circle cx="520" cy="80" r="5" />
-                                    </g>
-                                </svg>
+                                <div style="padding: 16px; background: rgba(255,255,255,0.05); border-radius: 12px; margin-top: 8px;">
+                                    <div style="color: #ef4444; font-weight: bold;">Device Down</div>
+                                    <div style="font-size: 12px; color: #ccc;">Core Router (10.0.0.1)</div>
+                                    <div style="font-size: 11px; color: #888; margin-top: 8px;">We'll email you when devices go down and when they come back up.</div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -97,157 +76,160 @@
             </div>
         </section>
 
-        <!-- Features Section -->
-        <section id="features" class="lp-section">
+        <!-- How It Works Section -->
+        <section id="how-it-works" class="lp-section">
             <div class="lp-container">
-                <div class="lp-section-head">
-                    <h2>Enterprise Features</h2>
-                    <p>Everything you need to maintain optimal network performance</p>
+                <div class="lp-section-head lp-center">
+                    <h2>How It Works</h2>
+                    <p>Three simple steps to never miss a network outage again</p>
+                </div>
+
+                <div class="lp-feature-grid" style="margin-top: 40px;">
+                    <article class="lp-card lp-span-4">
+                        <div class="lp-card-head">
+                            <div style="font-size: 48px; font-weight: bold; color: #4f8cff;">1</div>
+                            <h3>Add Your Devices</h3>
+                            <p>Enter a name and IP address for each device you want to monitor. That's it.</p>
+                        </div>
+                    </article>
+
+                    <article class="lp-card lp-span-4">
+                        <div class="lp-card-head">
+                            <div style="font-size: 48px; font-weight: bold; color: #4f8cff;">2</div>
+                            <h3>Start Monitoring</h3>
+                            <p>NetPulse pings your devices every few seconds to check if they're online.</p>
+                        </div>
+                    </article>
+
+                    <article class="lp-card lp-span-4">
+                        <div class="lp-card-head">
+                            <div style="font-size: 48px; font-weight: bold; color: #4f8cff;">3</div>
+                            <h3>Get Alerts</h3>
+                            <p>Receive instant email notifications when devices go down and when they recover.</p>
+                        </div>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <!-- Features Section -->
+        <section id="features" class="lp-section lp-section-muted">
+            <div class="lp-container">
+                <div class="lp-section-head lp-center">
+                    <h2>What You Get</h2>
+                    <p>Everything you need in a network monitoring system</p>
                 </div>
 
                 <div class="lp-feature-grid">
-                    <article class="lp-card lp-span-7 lp-tall">
+                    <article class="lp-card lp-span-4">
                         <div class="lp-card-head">
-                            <h3>Real-time Monitoring</h3>
-                            <p>Instant device status with customizable check intervals and performance thresholds.</p>
-                        </div>
-                        <div class="lp-card-body">
-                            <svg class="lp-mini-chart" viewBox="0 0 520 240" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                                <defs>
-                                    <linearGradient id="npMiniLine" x1="0" y1="0" x2="1" y2="0">
-                                        <stop offset="0" stop-color="#7c3aed" />
-                                        <stop offset="1" stop-color="#22c55e" />
-                                    </linearGradient>
-                                    <linearGradient id="npMiniFill" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="0" stop-color="#7c3aed" stop-opacity="0.25" />
-                                        <stop offset="1" stop-color="#7c3aed" stop-opacity="0" />
-                                    </linearGradient>
-                                </defs>
-                                <g opacity="0.25" stroke="#9ca3af" stroke-width="1">
-                                    <line x1="20" y1="30" x2="500" y2="30" />
-                                    <line x1="20" y1="80" x2="500" y2="80" />
-                                    <line x1="20" y1="130" x2="500" y2="130" />
-                                    <line x1="20" y1="180" x2="500" y2="180" />
-                                    <line x1="20" y1="230" x2="500" y2="230" />
-                                </g>
-                                <path d="M20 190 C 60 160, 110 200, 150 150 C 190 100, 230 140, 270 95 C 310 50, 350 95, 390 70 C 430 50, 470 70, 500 45 L 500 230 L 20 230 Z" fill="url(#npMiniFill)" />
-                                <path d="M20 190 C 60 160, 110 200, 150 150 C 190 100, 230 140, 270 95 C 310 50, 350 95, 390 70 C 430 50, 470 70, 500 45" fill="none" stroke="url(#npMiniLine)" stroke-width="4" stroke-linecap="round" />
-                            </svg>
+                            <h3>Email Alerts</h3>
+                            <p>Get notified immediately when a device goes down AND when it comes back online with downtime duration.</p>
                         </div>
                     </article>
 
-                    <article class="lp-card lp-span-5">
+                    <article class="lp-card lp-span-4">
                         <div class="lp-card-head">
-                            <h3>Smart Alerting</h3>
-                            <p>Instant notifications with configurable escalation policies.</p>
-                        </div>
-                        <div class="lp-card-body">
-                            <div class="lp-kpi">
-                                <div class="lp-kpi-label">Delivery Rate</div>
-                                <div class="lp-kpi-value">99.9%</div>
-                            </div>
-                            <div class="lp-kpi">
-                                <div class="lp-kpi-label">Response Time</div>
-                                <div class="lp-kpi-value">&lt;5s</div>
-                            </div>
+                            <h3>Downtime Tracking</h3>
+                            <p>See exactly how long each outage lasted. Perfect for SLA reporting.</p>
                         </div>
                     </article>
 
-                    <article class="lp-card lp-span-4 lp-card-soft">
+                    <article class="lp-card lp-span-4">
                         <div class="lp-card-head">
-                            <h3>Uptime Tracking</h3>
-                            <p>Historical uptime data with SLA reporting.</p>
-                        </div>
-                        <div class="lp-card-body">
-                            <div class="lp-stat">
-                                <div class="lp-stat-big">99.99%</div>
-                                <div class="lp-stat-sub">Monthly Uptime</div>
-                            </div>
+                            <h3>Auto-Recovery Detection</h3>
+                            <p>No need to check manually. We'll tell you when devices come back online.</p>
                         </div>
                     </article>
 
-                    <article class="lp-card lp-span-4 lp-card-soft">
+                    <article class="lp-card lp-span-4">
                         <div class="lp-card-head">
-                            <h3>Device Organization</h3>
-                            <p>Group devices by region, provider, or function.</p>
-                        </div>
-                        <div class="lp-card-body">
-                            <div class="lp-tags">
-                                <span class="lp-tag">Production</span>
-                                <span class="lp-tag">Staging</span>
-                                <span class="lp-tag">Edge</span>
-                            </div>
+                            <h3>Web Dashboard</h3>
+                            <p>View all your devices and their status at a glance.</p>
                         </div>
                     </article>
 
-                    <article class="lp-card lp-span-4 lp-card-warn">
+                    <article class="lp-card lp-span-4">
                         <div class="lp-card-head">
-                            <h3>Degraded Detection</h3>
-                            <p>Identify performance issues before outages occur.</p>
-                        </div>
-                        <div class="lp-card-body">
-                            <div class="lp-alert-chip">Early Warning</div>
+                            <h3>No Configuration Needed</h3>
+                            <p>Works out of the box. Add devices, start monitoring, get alerts.</p>
                         </div>
                     </article>
 
-                    <article class="lp-card lp-span-12 lp-card-dark" id="monitoring">
+                    <article class="lp-card lp-span-4">
                         <div class="lp-card-head">
-                            <h3>Simple Deployment</h3>
-                            <p>Add devices in seconds, start monitoring immediately.</p>
-                        </div>
-                        <div class="lp-card-body lp-card-dark-body">
-                            <div class="lp-code">
-                                <div class="lp-code-line">
-                                    <span class="lp-code-dot"></span>
-                                    <span class="lp-code-dot"></span>
-                                    <span class="lp-code-dot"></span>
-                                </div>
-                                <div class="lp-code-text">$ netpulse add --name "core-router" --ip 10.0.0.1</div>
-                                <div class="lp-code-text">$ netpulse monitor --interval 30</div>
-                            </div>
-                            <a class="lp-btn lp-btn-invert" href="register.html">Start Monitoring</a>
+                            <h3>No Alert Spam</h3>
+                            <p>Smart cooldown prevents email storms. Only alerts when it matters.</p>
                         </div>
                     </article>
                 </div>
             </div>
         </section>
 
-        <!-- Benefits Section -->
-        <section class="lp-section lp-section-muted">
+        <!-- What You'll Receive Section -->
+        <section class="lp-section">
             <div class="lp-container">
                 <div class="lp-split">
-                    <div class="lp-nodes">
-                        <div class="lp-nodes-head">
-                            <div class="lp-nodes-title">Active Network</div>
-                            <div class="lp-nodes-chip">LIVE</div>
+                    <div class="lp-split-copy">
+                        <h2>What You'll Receive</h2>
+                        <p>Clear, actionable emails when something happens — no technical jargon.</p>
+                        
+                        <div style="background: rgba(0,0,0,0.03); border-radius: 12px; padding: 20px; margin-top: 20px;">
+                            <div style="font-weight: bold; margin-bottom: 12px; color: #dc2626;">DOWN ALERT</div>
+                            <div style="background: #1a1a2e; color: #fff; padding: 12px; border-radius: 8px; font-family: monospace; font-size: 13px;">
+                                <strong>Device Down – Core Router</strong><br>
+                                Device: Core Router<br>
+                                IP Address: 10.0.0.1<br>
+                                Time: 10:32 PM<br>
+                                <span style="color: #888;">What this means: This device is currently unreachable.</span>
+                            </div>
                         </div>
-                        <div class="lp-node-row">
-                            <div class="lp-node-name">Primary Gateway</div>
-                            <div class="lp-node-pill lp-node-up">UP</div>
-                        </div>
-                        <div class="lp-node-row">
-                            <div class="lp-node-name">Backup Router</div>
-                            <div class="lp-node-pill lp-node-up">UP</div>
-                        </div>
-                        <div class="lp-node-row">
-                            <div class="lp-node-name">Edge Relay</div>
-                            <div class="lp-node-pill lp-node-warn">DEG</div>
+
+                        <div style="background: rgba(0,0,0,0.03); border-radius: 12px; padding: 20px; margin-top: 20px;">
+                            <div style="font-weight: bold; margin-bottom: 12px; color: #10b981;">RECOVERY ALERT</div>
+                            <div style="background: #1a1a2e; color: #fff; padding: 12px; border-radius: 8px; font-family: monospace; font-size: 13px;">
+                                <strong>Device Restored – Core Router</strong><br>
+                                Device: Core Router<br>
+                                Downtime: 5 minutes 30 seconds<br>
+                                <span style="color: #888;">Good news — the device is back online.</span>
+                            </div>
                         </div>
                     </div>
 
-                    <div class="lp-split-copy">
-                        <h2>Complete Infrastructure Visibility</h2>
-                        <p>
-                            Monitor everything from core routers to edge devices. NetPulse provides real-time insights 
-                            into your network health with zero configuration overhead.
-                        </p>
-                        <ul class="lp-checklist">
-                            <li>Automatic device discovery</li>
-                            <li>Performance analytics</li>
-                            <li>Instant alerting</li>
-                            <li>Historical reporting</li>
-                        </ul>
+                    <div class="lp-nodes">
+                        <div class="lp-nodes-head">
+                            <div class="lp-nodes-title">Example Devices</div>
+                            <div class="lp-nodes-chip">LIVE</div>
+                        </div>
+                        <div class="lp-node-row">
+                            <div class="lp-node-name">Core Router</div>
+                            <div class="lp-node-pill lp-node-up">UP</div>
+                        </div>
+                        <div class="lp-node-row">
+                            <div class="lp-node-name">ISP Gateway</div>
+                            <div class="lp-node-pill lp-node-up">UP</div>
+                        </div>
+                        <div class="lp-node-row">
+                            <div class="lp-node-name">DNS Server</div>
+                            <div class="lp-node-pill lp-node-up">UP</div>
+                        </div>
+                        <div class="lp-node-row">
+                            <div class="lp-node-name">Backup Link</div>
+                            <div class="lp-node-pill lp-node-warn">DEG</div>
+                        </div>
                     </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- CTA Section -->
+        <section class="lp-section lp-card-dark" style="text-align: center; margin: 40px 0;">
+            <div class="lp-container">
+                <h2 style="color: white;">Ready to start monitoring?</h2>
+                <p style="color: rgba(255,255,255,0.7); margin: 16px 0;">Get started in under 2 minutes. No credit card required.</p>
+                <div class="lp-hero-actions" style="justify-content: center;">
+                    <a class="lp-btn lp-btn-primary lp-btn-lg" href="register.html">Create Free Account</a>
+                    <a class="lp-btn lp-btn-invert lp-btn-lg" href="login.html">Sign In</a>
                 </div>
             </div>
         </section>
@@ -260,24 +242,24 @@
                     <span class="lp-logo-dot" aria-hidden="true"></span>
                     <span class="lp-logo-text">NetPulse</span>
                 </div>
-                <p class="lp-footer-note">Modern network monitoring for modern infrastructure.</p>
+                <p class="lp-footer-note">Know when your network goes down. Get email alerts instantly.</p>
                 <p class="lp-footer-note">© 2026 NetPulse. All rights reserved.</p>
             </div>
             <div class="lp-footer-col">
                 <div class="lp-footer-title">Product</div>
+                <a href="#how-it-works">How It Works</a>
                 <a href="#features">Features</a>
-                <a href="#monitoring">Monitoring</a>
                 <a href="dashboard.html">Dashboard</a>
             </div>
             <div class="lp-footer-col">
-                <div class="lp-footer-title">Company</div>
+                <div class="lp-footer-title">Account</div>
                 <a href="login.html">Sign in</a>
-                <a href="register.html">Get Started</a>
+                <a href="register.html">Create Account</a>
             </div>
             <div class="lp-footer-col">
                 <div class="lp-footer-title">Legal</div>
-                <span class="lp-footer-text">Privacy</span>
-                <span class="lp-footer-text">Terms</span>
+                <span class="lp-footer-text">Privacy Policy</span>
+                <span class="lp-footer-text">Terms of Service</span>
             </div>
         </div>
     </footer>

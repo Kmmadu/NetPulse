@@ -1,0 +1,12 @@
+# Service management
+sudo systemctl status netpulse-api     # Check API status
+sudo systemctl restart netpulse-api    # Restart API
+sudo systemctl stop netpulse-api       # Stop API
+sudo journalctl -u netpulse-api -f     # View API logs
+
+# Backup management
+/home/kmtech/Projects/NetPulse/scripts/backup.sh    # Manual backup
+/home/kmtech/Projects/NetPulse/scripts/restore.sh   # Restore from backup
+
+# Uninstall (if needed)
+./uninstall.sh

@@ -549,3 +549,12 @@ async def get_monitoring_status(token: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+@app.get("/api/debug/users", tags=["Debug"])
+async def debug_users():
+    import sqlite3
+    conn = sqlite3.connect("data/monitor.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, username, email FROM users")
+    users = cursor.fetchall()
+    conn.close()
+    return {"users": [{"id": u[0], "username": u[1], "email": u[2]} for u in users]}

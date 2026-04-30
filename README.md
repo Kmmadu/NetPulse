@@ -33,26 +33,18 @@ Device goes DOWN → Alert sent → Device recovers → Recovery alert with down
 
 ---
 
-## 🏗️ Project Structure
 
-```
-network-monitor/
-│
-├── app/
-│   ├── core/              # Monitoring engine
-│   ├── services/          # Ping, alerts
-│   ├── models/            # Data models
-│   ├── database/          # SQLite setup
-│   ├── api/               # Future API layer
-│   └── utils/             # Helpers
-│
-├── cli/                   # CLI interface
-├── config/                # Config files
-├── data/                  # Database storage
-├── tests/                 # Tests (future)
-│
-├── run.py                 # Entry point
-└── requirements.txt
+---
+
+## Quick Start
+
+### One-Command Install (Recommended)
+
+```bash
+git clone https://github.com/Kmmadu/NetPulse.git
+cd NetPulse
+chmod +x install.sh
+./install.sh
 ```
 
 ---

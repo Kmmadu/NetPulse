@@ -56,3 +56,9 @@ test_alert.py
 # OS files
 .DS_Store
 Thumbs.db
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+alert_state_*.json

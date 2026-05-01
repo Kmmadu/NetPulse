@@ -540,14 +540,13 @@ NetPulse Network Monitoring
                 print(f"[SUPPRESS] Skipping {new_status} alert for {device_id} - device is in flapping suppression period", flush=True)
                 return
             else:
-                # Suppression expired, remove from tracking
                 del self._flapping_suppressed_until[device_id]
                 print(f"[SUPPRESS] Suppression period ended for {device_id}", flush=True)
         
         # Record status for history
         self._record_status_history(device_id, new_status)
         
-        # Get device info
+        # Get device info from database
         device = self._get_device_info(device_id)
         if not device:
             print(f"⚠️ Device not found: {device_id}")
@@ -563,29 +562,38 @@ NetPulse Network Monitoring
                 cursor.execute("""
                     UPDATE devices SET down_since = ? WHERE device_id = ?
                 """, (datetime.now().isoformat(), device_id))
-            
             self.send_down_alert(device_id, device['name'], device['ip_address'])
         
         # Case 2: Device recovered from DOWN (DOWN → UP or DOWN → DEGRADED)
         elif old_status == "DOWN" and new_status != "DOWN":
+            # Get down_since BEFORE we clear it
             down_since = device.get('down_since')
             downtime_seconds = 0
             
+            print(f"[RECOVERY DEBUG] down_since from DB: {down_since}", flush=True)
+            
             if down_since:
-                down_time = datetime.fromisoformat(down_since)
-                downtime_seconds = int((datetime.now() - down_time).total_seconds())
-                print(f"[ALERT_TRIGGER] 🟢 Device {device['name']} recovered after {downtime_seconds} seconds", flush=True)
-                
+                try:
+                    down_time = datetime.fromisoformat(down_since)
+                    downtime_seconds = int((datetime.now() - down_time).total_seconds())
+                    print(f"[ALERT_TRIGGER] 🟢 Device {device['name']} recovered after {downtime_seconds} seconds", flush=True)
+                except Exception as e:
+                    print(f"[RECOVERY ERROR] Failed to parse down_since: {e}", flush=True)
+                    downtime_seconds = 0
+            
+            # Send recovery alert FIRST (with the downtime we calculated)
+            self.send_recovery_alert(device_id, device['name'], device['ip_address'], downtime_seconds)
+            
+            # THEN clear down_since AFTER sending the alert
+            if down_since:
                 with self._get_connection() as conn:
                     cursor = conn.cursor()
                     cursor.execute("""
                         UPDATE devices SET down_since = NULL WHERE device_id = ?
                     """, (device_id,))
-            
-            self.send_recovery_alert(device_id, device['name'], device['ip_address'], downtime_seconds)
+                    print(f"[RECOVERY DEBUG] Cleared down_since for {device['name']}", flush=True)
         
         # Case 3: Check for erratic behavior (flapping detection)
-        # Only check if not already suppressed
         if device_id not in self._flapping_suppressed_until and self._is_erratic(device_id):
             print(f"[ALERT_TRIGGER] ⚠️ Device {device['name']} is erratic - sending suppression alert", flush=True)
             self.send_erratic_alert(device_id, device['name'], device['ip_address'])

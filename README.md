@@ -1,3 +1,5 @@
+![NetPulse Dashboard](https://raw.githubusercontent.com/Kmmadu/NetPulse/main/network-monitor/web/dashboard.png)
+
 # NetPulse - Network Monitoring System
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -57,7 +59,7 @@ python3 -m venv venv
 source venv/bin/activate
 
 # Install dependencies
-pip install -r requirements.txt
+pip install -r network-monitor/requirements.txt
 
 # Setup environment variables
 cp .env.example .env
@@ -74,9 +76,9 @@ python3 -m http.server 8080
 
 ## Configuration
 
-### Edit .env:
+### Edit `.env`
 
-# SMTP Configuration
+```env
 SMTP_SERVER=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USERNAME=your-email@gmail.com
@@ -84,15 +86,12 @@ SMTP_PASSWORD=your-app-password
 SMTP_FROM=your-email@gmail.com
 SMTP_TO=alerts@yourdomain.com
 
-# Alerts
 ALERTS_ENABLED=true
 ALERT_DOWN_COOLDOWN=5
 ALERT_RECOVERY_COOLDOWN=5
 ALERT_ERRATIC_COOLDOWN=30
-
-# Feature Flags
 PREMIUM_MODE=false
-
+```
 ---
 
 ## Gmail Setup (App Password)
@@ -162,18 +161,15 @@ Downtime: 5 minutes
 
 ```
 NetPulse/
-├── app/                  # Backend logic
-├── web/                  # Frontend UI
-├── data/                 # SQLite database
-├── logs/                 # Logs
-├── backups/              # Backups
-├── scripts/              # Utility scripts
-├── systemd/              # Service files
-├── .env.example
-├── requirements.txt
+├── network-monitor/
+│ ├── app/ # Backend logic
+│ ├── web/ # Frontend UI
+│ ├── data/ # SQLite database
+│ └── requirements.txt
+├── scripts/
+├── backups/
 ├── install.sh
 └── README.md
-
 ```
 ---
 

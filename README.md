@@ -2,6 +2,8 @@
 
 # NetPulse - Network Monitoring System
 
+> Monitor your network and get instant email alerts when devices go down and recover.
+
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104-blue.svg)](https://fastapi.tiangolo.com)

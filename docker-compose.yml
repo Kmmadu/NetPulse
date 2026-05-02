@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  netpulse:
+    build: .
+    container_name: netpulse
+    ports:
+      - "8000:8000"
+      - "8080:8080"
+    volumes:
+      # Persist database
+      - ./data:/app/network-monitor/data
+      # Mount config file (optional)
+      - ./network-monitor/.env:/app/network-monitor/.env:ro
+    environment:
+      - TZ=Africa/Lagos
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - netpulse-net
+
+networks:
+  netpulse-net:
+    driver: bridge

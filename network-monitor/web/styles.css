@@ -1955,3 +1955,525 @@ body:not(.lp-body):not(.auth-body) {
     font-size: 12px;
     font-weight: bold;
 }
+/* ============================================
+   COMPLETE MOBILE OVERHAUL
+   ============================================ */
+
+@media (max-width: 768px) {
+    /* Fix container widths */
+    .lp-container,
+    .dashboard-main {
+        padding-left: 20px;
+        padding-right: 20px;
+        overflow-x: hidden;
+    }
+
+    /* Fix hero section */
+    .lp-hero {
+        padding: 40px 0 20px 0;
+    }
+
+    .lp-hero-copy h1 {
+        font-size: 32px;
+        line-height: 1.3;
+    }
+
+    .lp-lead {
+        font-size: 15px;
+        line-height: 1.5;
+    }
+
+    /* Fix buttons - full width */
+    .lp-hero-actions {
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .lp-btn {
+        width: 100%;
+        justify-content: center;
+        padding: 14px 20px;
+    }
+
+    /* Fix cards */
+    .lp-card {
+        padding: 20px;
+    }
+
+    .lp-card-head h3 {
+        font-size: 18px;
+    }
+
+    /* Fix feature grid */
+    .lp-feature-grid {
+        gap: 16px;
+    }
+
+    /* Fix split section */
+    .lp-split {
+        grid-template-columns: 1fr;
+        gap: 30px;
+    }
+
+    .lp-split-copy {
+        text-align: center;
+        padding: 0 10px;
+    }
+
+    .lp-split-copy h2 {
+        font-size: 28px;
+    }
+
+    .lp-checklist {
+        text-align: left;
+        padding-left: 20px;
+    }
+
+    /* Fix nodes section */
+    .lp-nodes {
+        margin: 0;
+        padding: 20px;
+    }
+
+    /* Fix footer */
+    .lp-footer-grid {
+        grid-template-columns: 1fr;
+        text-align: center;
+        gap: 30px;
+    }
+
+    .lp-footer-logo {
+        justify-content: center;
+    }
+
+    .lp-footer-col {
+        align-items: center;
+    }
+
+    /* Fix section headings */
+    .lp-section-head h2 {
+        font-size: 28px;
+    }
+
+    .lp-section-head p {
+        font-size: 14px;
+        padding: 0 10px;
+    }
+
+    /* Fix media card */
+    .lp-media-card {
+        max-width: 280px;
+        margin: 0 auto;
+    }
+
+    /* Fix dashboard stats cards */
+    .overview-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+
+    .dashboard-card {
+        padding: 16px;
+    }
+
+    .card-value {
+        font-size: 28px;
+    }
+
+    /* Fix control center */
+    .control-grid {
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+
+    .info-card {
+        padding: 20px;
+    }
+
+    .info-card-header {
+        flex-direction: column;
+    }
+
+    /* Fix interval presets */
+    .interval-presets {
+        justify-content: center;
+    }
+
+    .preset-btn {
+        padding: 10px 14px;
+        font-size: 12px;
+    }
+
+    /* Fix control actions */
+    .control-actions {
+        flex-direction: column;
+    }
+
+    .btn-start, .btn-stop, .btn-save {
+        width: 100%;
+        padding: 12px 20px;
+    }
+
+    /* Fix device card header */
+    .device-card-header {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 16px;
+    }
+
+    .device-actions-bar {
+        flex-direction: column;
+    }
+
+    .search-wrapper .search-input {
+        width: 100%;
+    }
+
+    .refresh-btn, .add-btn {
+        width: 100%;
+    }
+
+    /* Fix table for mobile */
+    .device-table thead {
+        display: none;
+    }
+
+    .device-table tbody tr {
+        display: block;
+        margin-bottom: 16px;
+        border: 1px solid rgba(15, 23, 42, 0.1);
+        border-radius: 16px;
+        padding: 12px;
+    }
+
+    .device-table td {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 12px;
+        border: none;
+        border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+        gap: 10px;
+    }
+
+    .device-table td:last-child {
+        border-bottom: none;
+    }
+
+    .device-table td::before {
+        content: attr(data-label);
+        font-weight: 700;
+        font-size: 12px;
+        color: #64748b;
+        min-width: 90px;
+        text-align: left;
+    }
+
+    /* Fix action buttons on mobile */
+    .action-btn {
+        padding: 8px 16px;
+        margin: 0;
+    }
+
+    /* Fix auth pages */
+    .auth-container {
+        padding: 30px 24px;
+        margin: 16px;
+    }
+
+    .auth-container .logo h1 {
+        font-size: 28px;
+    }
+
+    .auth-container button {
+        padding: 14px 20px;
+    }
+
+    /* Fix navbar */
+    .navbar {
+        padding: 12px 16px;
+    }
+
+    .navbar-left {
+        width: 100%;
+        flex-direction: row;
+        justify-content: space-between;
+    }
+
+    .nav-links {
+        display: none;
+    }
+
+    .navbar-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    /* Fix modal on mobile */
+    .modal-content {
+        width: 90%;
+        padding: 24px;
+        margin: 20px;
+    }
+
+    /* Fix filter chips */
+    .filter-chips {
+        justify-content: center;
+        gap: 8px;
+    }
+
+    .filter-chip {
+        padding: 6px 12px;
+        font-size: 11px;
+    }
+}
+
+/* Extra small devices (phones under 480px) */
+@media (max-width: 480px) {
+    .lp-hero-copy h1 {
+        font-size: 28px;
+    }
+
+    .card-value {
+        font-size: 24px;
+    }
+
+    .overview-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .lp-section-head h2 {
+        font-size: 24px;
+    }
+
+    .lp-split-copy h2 {
+        font-size: 24px;
+    }
+
+    .device-table td {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+    }
+
+    .device-table td::before {
+        min-width: auto;
+    }
+}
+
+/* Fix for touch targets */
+@media (max-width: 768px) {
+    button,
+    .lp-btn,
+    .action-btn,
+    .add-btn,
+    .refresh-btn,
+    .preset-btn,
+    .filter-chip,
+    .clickable-card {
+        cursor: pointer;
+        min-height: 44px;
+    }
+
+    input,
+    select,
+    .search-input,
+    .alert-input {
+        font-size: 16px; /* Prevents zoom on focus in iOS */
+    }
+}
+/* ============================================
+   LANDING PAGE MOBILE OPTIMIZATION
+   ============================================ */
+
+@media (max-width: 768px) {
+    /* Reduce hero section height - more compact */
+    .lp-hero {
+        padding: 30px 0 20px 0;
+    }
+
+    .lp-hero-grid {
+        gap: 20px;
+    }
+
+    /* Smaller badge */
+    .lp-badge {
+        font-size: 10px;
+        padding: 4px 10px;
+    }
+
+    /* Smaller heading */
+    .lp-hero-copy h1 {
+        font-size: 28px;
+        margin-top: 8px;
+    }
+
+    /* Shorter description */
+    .lp-lead {
+        font-size: 13px;
+        margin-top: 10px;
+    }
+
+    /* Compact buttons */
+    .lp-btn {
+        padding: 10px 16px;
+        font-size: 13px;
+    }
+
+    .lp-btn-lg {
+        padding: 10px 16px;
+        font-size: 13px;
+    }
+
+    /* Proof text smaller */
+    .lp-proof-text {
+        font-size: 11px;
+    }
+
+    /* Media card smaller */
+    .lp-media-card {
+        max-width: 240px;
+        padding: 14px;
+    }
+
+    .lp-media-title {
+        font-size: 10px;
+    }
+
+    .lp-media-subtitle {
+        font-size: 11px;
+    }
+
+    /* Example alert box smaller */
+    .lp-media-card div[style*="padding: 16px"] {
+        padding: 10px !important;
+    }
+
+    .lp-media-card div[style*="color: #ef4444"] {
+        font-size: 12px;
+    }
+
+    .lp-media-card div[style*="font-size: 12px"] {
+        font-size: 10px !important;
+    }
+
+    /* Section spacing reduced */
+    .lp-section {
+        padding: 40px 0;
+    }
+
+    .lp-section-head {
+        margin-bottom: 28px;
+    }
+
+    .lp-section-head h2 {
+        font-size: 24px;
+    }
+
+    .lp-section-head p {
+        font-size: 13px;
+    }
+
+    /* Feature cards more compact */
+    .lp-card {
+        padding: 18px;
+        gap: 12px;
+    }
+
+    .lp-card-head h3 {
+        font-size: 16px;
+    }
+
+    .lp-card-head p {
+        font-size: 12px;
+    }
+
+    /* Number circles smaller */
+    .lp-card-head div[style*="font-size: 48px"] {
+        font-size: 36px !important;
+    }
+
+    /* Email example boxes */
+    .lp-split-copy div[style*="background: rgba(0,0,0,0.03)"] {
+        padding: 14px !important;
+    }
+
+    .lp-split-copy div[style*="background: #1a1a2e"] {
+        padding: 10px !important;
+        font-size: 11px !important;
+    }
+
+    /* Remove extra margin from CTA section */
+    .lp-card-dark {
+        margin: 30px 0 !important;
+    }
+
+    .lp-card-dark h2 {
+        font-size: 22px !important;
+    }
+
+    .lp-card-dark p {
+        font-size: 13px !important;
+    }
+
+    /* Footer compact */
+    .lp-footer {
+        padding: 32px 0 24px;
+        margin-top: 40px;
+    }
+
+    .lp-footer-note {
+        font-size: 12px;
+    }
+
+    .lp-footer-title {
+        font-size: 11px;
+    }
+
+    .lp-footer-col a,
+    .lp-footer-text {
+        font-size: 12px;
+    }
+}
+
+/* Very small phones (under 400px) */
+@media (max-width: 400px) {
+    .lp-hero-copy h1 {
+        font-size: 24px;
+    }
+
+    .lp-btn {
+        padding: 8px 14px;
+        font-size: 12px;
+    }
+
+    .lp-card {
+        padding: 14px;
+    }
+
+    .lp-card-head h3 {
+        font-size: 15px;
+    }
+
+    .lp-section-head h2 {
+        font-size: 22px;
+    }
+
+    .lp-split-copy h2 {
+        font-size: 20px;
+    }
+
+    .lp-nodes {
+        padding: 14px;
+    }
+
+    .lp-node-row {
+        font-size: 11px;
+        padding: 8px 0;
+    }
+
+    .lp-node-pill {
+        font-size: 9px;
+        padding: 3px 8px;
+    }
+}

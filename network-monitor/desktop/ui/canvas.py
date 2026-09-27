@@ -1,8 +1,7 @@
 """
 Topology canvas — the central drawing surface for the network map.
 
-Milestone 4: connection mode, edge lifecycle management, and updated
-delete semantics (deleting a node also deletes its edges).
+Milestone 5: adding and editing devices goes through DeviceDialog.
 """
 
 from PySide6.QtWidgets import (
@@ -16,6 +15,7 @@ from PySide6.QtGui import QPainter, QKeyEvent, QContextMenuEvent, QCursor
 from ui.device_node import DeviceNode
 from ui.connection_item import ConnectionItem
 from ui.device_types import DeviceType
+from ui.device_dialog import DeviceDialog
 
 
 class TopologyCanvas(QGraphicsView):
@@ -48,13 +48,7 @@ class TopologyCanvas(QGraphicsView):
 
         self._node_counter = 0
 
-        # Edge registry. Kept separate from the scene's item list so that
-        # deletion and lookup are O(edges) rather than scanning all items,
-        # and so that edges can be reasoned about as a distinct collection.
         self._connections: list[ConnectionItem] = []
-
-        # Connection-mode state. None means "normal interaction".
-        # A non-None value is the source node whose edge is being drawn.
         self._connect_source: DeviceNode | None = None
 
     # ------------------------------------------------------------------
@@ -102,6 +96,8 @@ class TopologyCanvas(QGraphicsView):
         scene_pos: QPointF = None,
         name: str = None,
         device_type: DeviceType = DeviceType.GENERIC,
+        ip_address: str = "",
+        monitoring_enabled: bool = True,
     ) -> DeviceNode:
         self._node_counter += 1
         if name is None:
@@ -110,20 +106,51 @@ class TopologyCanvas(QGraphicsView):
         if scene_pos is None:
             scene_pos = self.mapToScene(self.viewport().rect().center())
 
-        node = DeviceNode(name=name, device_type=device_type)
+        node = DeviceNode(
+            name=name,
+            ip_address=ip_address,
+            device_type=device_type,
+            monitoring_enabled=monitoring_enabled,
+        )
         node.setPos(
             scene_pos - QPointF(DeviceNode.WIDTH / 2, DeviceNode.HEIGHT / 2)
         )
+        node.doubleClicked.connect(self._on_node_double_clicked)
+
         self._scene.addItem(node)
         return node
+
+    def _on_node_double_clicked(self, node: DeviceNode) -> None:
+        self.edit_device(node)
+
+    def edit_device(self, node: DeviceNode) -> None:
+        """Open the edit dialog seeded with the node's current values, and
+        apply the changes if the user accepts. No-op on cancel."""
+        dialog = DeviceDialog(
+            self,
+            title=f"Edit '{node.name}'",
+            name=node.name,
+            ip_address=node.ip_address,
+            device_type=node.device_type,
+            monitoring_enabled=node.monitoring_enabled,
+        )
+        if dialog.exec() != DeviceDialog.DialogCode.Accepted:
+            return
+
+        node.name = dialog.name
+        node.ip_address = dialog.ip_address
+        node.set_device_type(dialog.device_type)
+        node.set_monitoring_enabled(dialog.monitoring_enabled)
+
+        # Name and IP are not cache-invalidating setters on DeviceNode; force
+        # a repaint so the name change is visible immediately.
+        node._invalidate_cache()
 
     # ------------------------------------------------------------------
     # Connection operations
     # ------------------------------------------------------------------
 
     def _find_existing_connection(self, a: DeviceNode, b: DeviceNode):
-        """Return the existing edge between a and b, or None. Direction-
-        agnostic: A→B and B→A are considered the same connection."""
         for conn in self._connections:
             if (
                 (conn.from_node is a and conn.to_node is b)
@@ -135,13 +162,6 @@ class TopologyCanvas(QGraphicsView):
     def add_connection(
         self, from_node: DeviceNode, to_node: DeviceNode
     ) -> ConnectionItem | None:
-        """
-        Create an edge between two distinct nodes.
-
-        Refuses (returns None, no error) if:
-          - the nodes are the same (self-loop),
-          - a connection already exists between them (parallel edge).
-        """
         if from_node is to_node:
             return None
         if self._find_existing_connection(from_node, to_node) is not None:
@@ -153,8 +173,6 @@ class TopologyCanvas(QGraphicsView):
         return conn
 
     def _remove_connection(self, conn: ConnectionItem) -> None:
-        """Remove a single edge from the scene and the registry, and detach
-        its signals so it cannot be woken later."""
         conn.detach()
         if conn in self._connections:
             self._connections.remove(conn)
@@ -165,15 +183,6 @@ class TopologyCanvas(QGraphicsView):
     # ------------------------------------------------------------------
 
     def delete_selected_items(self) -> int:
-        """
-        Delete every selected node and/or edge.
-
-        Ordering matters: when a node is deleted, all edges touching it must
-        be removed first. Otherwise we would be left with edges referencing a
-        node that is no longer in the scene, and the next drag of any *other*
-        node would try to lay out an edge whose endpoint's scene position is
-        undefined.
-        """
         selected = self._scene.selectedItems()
 
         selected_nodes = [it for it in selected if isinstance(it, DeviceNode)]
@@ -181,19 +190,16 @@ class TopologyCanvas(QGraphicsView):
 
         removed = 0
 
-        # First pass: for each selected node, remove every edge touching it.
         for node in selected_nodes:
             for conn in list(self._connections):
                 if conn.connects(node):
                     self._remove_connection(conn)
                     removed += 1
 
-        # Second pass: remove nodes.
         for node in selected_nodes:
             self._scene.removeItem(node)
             removed += 1
 
-        # Third pass: remove any remaining selected edges.
         for conn in selected_edges:
             if conn in self._connections:
                 self._remove_connection(conn)
@@ -206,7 +212,6 @@ class TopologyCanvas(QGraphicsView):
     # ------------------------------------------------------------------
 
     def _begin_connect(self, source: DeviceNode) -> None:
-        """Enter connection mode with `source` as the origin."""
         self._connect_source = source
         self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
 
@@ -215,7 +220,6 @@ class TopologyCanvas(QGraphicsView):
         self.unsetCursor()
 
     def mousePressEvent(self, event) -> None:
-        # If we are in connection mode, a left-click resolves the target.
         if self._connect_source is not None:
             if event.button() == Qt.MouseButton.LeftButton:
                 scene_pos = self.mapToScene(event.pos())
@@ -227,7 +231,6 @@ class TopologyCanvas(QGraphicsView):
                 event.accept()
                 return
             if event.button() == Qt.MouseButton.RightButton:
-                # Right-click cancels without creating.
                 self._cancel_connect()
                 event.accept()
                 return
@@ -239,8 +242,6 @@ class TopologyCanvas(QGraphicsView):
     # ------------------------------------------------------------------
 
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
-        # A right-click while in connection mode cancels the pending connect
-        # instead of opening a menu.
         if self._connect_source is not None:
             self._cancel_connect()
             event.accept()
@@ -269,6 +270,7 @@ class TopologyCanvas(QGraphicsView):
                 self._scene.clearSelection()
                 item.setSelected(True)
 
+            act_edit = menu.addAction(f"Edit '{item.name}'…")
             act_connect = menu.addAction(f"Start connection from '{item.name}'")
 
             change_menu = menu.addMenu("Change type")
@@ -284,6 +286,9 @@ class TopologyCanvas(QGraphicsView):
             chosen = menu.exec(event.globalPos())
             if chosen is None:
                 return
+            if chosen == act_edit:
+                self.edit_device(item)
+                return
             if chosen == act_connect:
                 self._begin_connect(item)
                 return
@@ -296,6 +301,9 @@ class TopologyCanvas(QGraphicsView):
             return
 
         # --- Case 3: empty canvas ---
+        # The Add submenu still lists the five types, but each entry now
+        # opens the dialog so the user can fill in the IP before the node
+        # is committed. Cancel means no node is created.
         add_menu = menu.addMenu("Add device node")
         for dtype in DeviceType:
             act = add_menu.addAction(dtype.label)
@@ -306,14 +314,40 @@ class TopologyCanvas(QGraphicsView):
             return
         data = chosen.data()
         if isinstance(data, DeviceType):
-            self.add_device_node(scene_pos=scene_pos, device_type=data)
+            self._add_device_via_dialog(scene_pos, data)
+
+    def _add_device_via_dialog(
+        self, scene_pos: QPointF, device_type: DeviceType
+    ) -> None:
+        self._node_counter += 1
+        suggested_name = f"device-{self._node_counter}"
+        # Undo the increment if the user cancels; otherwise the counter
+        # would skip numbers for nodes that were never created.
+        dialog = DeviceDialog(
+            self,
+            title="Add device",
+            name=suggested_name,
+            ip_address="",
+            device_type=device_type,
+            monitoring_enabled=True,
+        )
+        if dialog.exec() != DeviceDialog.DialogCode.Accepted:
+            self._node_counter -= 1
+            return
+
+        self.add_device_node(
+            scene_pos=scene_pos,
+            name=dialog.name,
+            device_type=dialog.device_type,
+            ip_address=dialog.ip_address,
+            monitoring_enabled=dialog.monitoring_enabled,
+        )
 
     # ------------------------------------------------------------------
     # Keyboard
     # ------------------------------------------------------------------
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        # Esc cancels a pending connection.
         if event.key() == Qt.Key.Key_Escape and self._connect_source is not None:
             self._cancel_connect()
             event.accept()

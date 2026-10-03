@@ -9,7 +9,12 @@ from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout
 from PySide6.QtCore import QThread, Qt
 
 from ui.canvas import TopologyCanvas
-from monitoring_worker import MonitoringWorker
+from monitoring_worker import (
+    MonitoringWorker,
+    PING_COUNT,
+    PING_TIMEOUT,
+    RETRY_COUNT,
+)
 
 
 class MainWindow(QMainWindow):
@@ -42,10 +47,12 @@ class MainWindow(QMainWindow):
         self._worker.moveToThread(self._worker_thread)
 
         # Lifecycle wiring.
-        #   thread.started     -> worker.on_thread_started  (builds engine, starts timer)
-        #   worker.engineReady -> the canvas slot that shows "monitoring active"
+        #   thread.started       -> worker.on_thread_started  (builds engine, starts timer)
+        #   worker.engineReady   -> status bar update
         #   worker.cycleComplete -> canvas.on_cycle_complete (updates node statuses)
-        #   GUI close          -> worker.on_stop (stops timer), then thread.quit/wait
+        #   worker.registerNode  -> worker.on_register_node
+        #   worker.unregisterNode -> worker.on_unregister_node
+        #   GUI close            -> worker.on_stop, then thread.quit/wait
         #
         # The `started` connection is explicitly queued. QThread.started is
         # emitted from the newly started thread; a QueuedConnection ensures
@@ -68,9 +75,6 @@ class MainWindow(QMainWindow):
         self._worker.registerNode.connect(self._worker.on_register_node)
         self._worker.unregisterNode.connect(self._worker.on_unregister_node)
 
-        # The canvas uses these signals to register and unregister nodes.
-        # The canvas emits them; the worker's slots receive them via queued
-        # connections (automatic because they cross threads).
         self.canvas.attach_worker(self._worker)
 
         self._worker_thread.start()
@@ -90,31 +94,56 @@ class MainWindow(QMainWindow):
     # Shutdown
     # ------------------------------------------------------------------
 
+    def _shutdown_wait_ms(self) -> int:
+        """
+        Derive the wait timeout for worker-thread shutdown from the ping
+        parameters the worker actually uses.
+
+        Why derived: on_stop() can only be delivered *between* cycles, so
+        shutdown always waits for at most one full cycle. A full cycle is
+        bounded, per device, by RETRY_COUNT * PING_COUNT * PING_TIMEOUT
+        seconds. Pings run in parallel across devices, so the bound does
+        not multiply by device count. We add a safety buffer and clamp the
+        lower bound at 5 seconds so an accidentally-tiny configuration does
+        not cause premature terminate() on slow hosts.
+        """
+        per_device_bound_seconds = RETRY_COUNT * PING_COUNT * PING_TIMEOUT
+        buffer_seconds = 5
+        total_seconds = per_device_bound_seconds + buffer_seconds
+        return max(5000, total_seconds * 1000)
+
     def closeEvent(self, event) -> None:
         """
         Stop the worker cooperatively, then quit and join the thread.
 
-        Order matters:
-          1. Ask the worker to stop its timer (queued, runs on worker thread).
+        Order:
+          1. Ask the worker to stop (queued; runs on worker thread).
+             Sets the stop flag and stops the timer. Any cycle currently
+             in progress runs to completion; no new cycle starts.
           2. Quit the thread's event loop.
-          3. Wait for the thread to exit.
+          3. Wait for the thread to exit, using a timeout derived from the
+             ping parameters. If that wait fails, fall back to terminate()
+             — which is documented as unsafe but is still preferable to a
+             hung application.
 
-        We do not use QThread.terminate(): it is documented as unsafe and can
-        kill a thread mid-subprocess, leaving a zombie ping process.
+        QThread.terminate() is a real risk when the target thread might be
+        running Python bytecode (which it is here whenever a cycle is in
+        flight). Forced cancellation can leave the interpreter and CPython
+        refcounts in an inconsistent state, which cascades into stray
+        exceptions in unrelated slots, dangling glib event sources, and a
+        segfault on exit. The wait timeout is sized to make this fallback
+        practically unreachable; if it does fire, something is genuinely
+        wrong and we accept the risk rather than hang.
         """
-        # Emitting this signal is a queued invocation of on_stop on the
-        # worker thread. It returns immediately.
         self._worker.stop.emit()
 
-        # Give the worker thread a chance to process the stop slot before
-        # we ask its event loop to quit. QThread.quit() enqueues a quit
-        # event; wait() blocks until it is processed.
         self._worker_thread.quit()
-        if not self._worker_thread.wait(5000):
-            # If 5s is not enough (should never happen unless the worker
-            # is mid-ping on a very slow host), fall back to terminate so
-            # the app can exit. This is ugly but better than a hang.
-            print("[main_window] worker thread did not exit in 5s; terminating")
+        wait_ms = self._shutdown_wait_ms()
+        if not self._worker_thread.wait(wait_ms):
+            print(
+                f"[main_window] worker thread did not exit in "
+                f"{wait_ms}ms; terminating (this should not happen)"
+            )
             self._worker_thread.terminate()
             self._worker_thread.wait(1000)
 

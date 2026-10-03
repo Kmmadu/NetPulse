@@ -2,13 +2,14 @@
 """
 NetPulse desktop GUI — entry point.
 
-Milestone 6: adds sys.path setup so the desktop app can import from the
-sibling `app/` package, suppresses a noisy Wayland text-input diagnostic,
-and keeps a Python reference to the MainWindow so it is not garbage
-collected while the Qt event loop runs.
+Milestone 6: sys.path setup for the sibling `app/` package, Wayland noise
+suppression, explicit reference to the main window so it is not garbage
+collected, and a SIGINT handler so Ctrl-C goes through the same clean
+shutdown path as closing the window.
 """
 
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -25,6 +26,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from PySide6.QtCore import QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from ui.main_window import MainWindow  # noqa: E402
@@ -38,11 +40,30 @@ def main() -> int:
     window = MainWindow()
     window.show()
 
-    # `window` must be kept alive for the duration of the event loop.
-    # Assigning to a local would allow Python to garbage-collect it as
-    # soon as main() returns, which never happens while app.exec() runs,
-    # but keeping an explicit attribute is the standard Qt convention.
+    # Keep an explicit reference so the window is not garbage-collected
+    # while the Qt event loop runs.
     app._netpulse_main_window = window
+
+    # Route SIGINT through the normal Qt quit path. Without this, Ctrl-C
+    # raises KeyboardInterrupt inside whichever slot is executing, which
+    # Qt does not handle gracefully and which leaves timers on the wrong
+    # thread (the "QObject::killTimer: Timers cannot be stopped from
+    # another thread" warnings on exit).
+    #
+    # The handler runs on the Python side of the interpreter, in whatever
+    # thread the signal is delivered to — normally the main thread, which
+    # is where Qt's event loop lives. Calling app.quit() from there is
+    # safe and queues a normal shutdown.
+    signal.signal(signal.SIGINT, lambda *_: app.quit())
+
+    # Qt does not wake its event loop for Python signal handlers on its
+    # own. A periodic no-op timer gives the interpreter a chance to run
+    # pending signal handlers every 200 ms. Without this, Ctrl-C is only
+    # noticed the next time a Python callback runs, which can be never if
+    # the app is idle.
+    sigint_timer = QTimer()
+    sigint_timer.start(200)
+    sigint_timer.timeout.connect(lambda: None)
 
     return app.exec()
 

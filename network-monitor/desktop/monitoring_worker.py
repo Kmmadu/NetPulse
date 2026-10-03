@@ -33,6 +33,17 @@ Timer timing note (important):
     and will silently never tick. The fix is to defer timer creation via
     QTimer.singleShot(0, ...), which runs on the next event-loop turn,
     by which point the loop is definitely live.
+
+Shutdown:
+    on_stop() sets a stop-requested flag and stops the timer. Because the
+    worker thread's event loop is blocked for the duration of any running
+    check_all_devices() call, on_stop can only be delivered *between*
+    cycles, never during one. The flag therefore guarantees that no new
+    cycle starts after stop is requested; it cannot interrupt a cycle that
+    is already in progress. The consequence is that shutdown always waits
+    for at most one full cycle, and the wait timeout on the GUI side must
+    be sized to cover that worst case. See main_window.py for the
+    derivation.
 """
 
 from __future__ import annotations
@@ -41,7 +52,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 # Make `app` importable when this module is imported from the desktop app.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -59,6 +70,17 @@ _DB_PATH = str(Path(__file__).resolve().parent / "data" / "desktop_monitor.db")
 
 # How often the worker runs a full check cycle.
 INTERVAL_SECONDS = 10
+
+# Per-device ping parameters the worker injects into each Device. Exported
+# so main_window.py can derive its shutdown wait timeout from the same
+# numbers the worker actually uses, rather than from a hard-coded guess.
+#
+# A full cycle issues PING_COUNT ICMP packets per device (parallel across
+# devices), each with a PING_TIMEOUT upper bound, and the engine retries
+# up to RETRY_COUNT times before declaring DOWN.
+PING_COUNT = 3          # matches MonitoringEngine.ping(count=3) default
+PING_TIMEOUT = 2        # matches Device(timeout=2) below
+RETRY_COUNT = 2         # matches Device(retry_count=2) below
 
 
 class MonitoringWorker(QObject):
@@ -78,8 +100,8 @@ class MonitoringWorker(QObject):
                              thread quit.
 
     Every method of this class except __init__ runs on the worker thread.
-    Do not touch self._engine, self._nodes, or self._timer from the GUI
-    thread.
+    Do not touch self._engine, self._timer, or self._pending_registrations
+    from the GUI thread.
     """
 
     engineReady = Signal()
@@ -93,10 +115,13 @@ class MonitoringWorker(QObject):
         super().__init__(parent)
         self._engine: Optional[MonitoringEngine] = None
         self._timer: Optional[QTimer] = None
-        # Guards against the (impossible in practice, but cheap to defend)
-        # case of a register arriving before on_thread_started(). The
-        # queued-connection ordering guarantees started() is delivered
-        # before any queued slot, so this is belt-and-braces.
+        # Set by on_stop(). Checked by _on_tick() before starting a cycle.
+        # See module docstring, "Shutdown", for why this can only prevent
+        # the *next* cycle and cannot interrupt one in progress.
+        self._stop_requested: bool = False
+        # Registrations that arrived before the engine existed. Applied
+        # once on_thread_started runs. Order preserved because it is a
+        # list, not a set.
         self._pending_registrations: List[tuple] = []
 
     # ------------------------------------------------------------------
@@ -112,34 +137,18 @@ class MonitoringWorker(QObject):
 
         The timer is not created here directly. QThread.started is emitted
         before the thread's event loop is running, and a QTimer started at
-        that moment never fires. See module docstring.
+        that moment never fires. QTimer.singleShot(0, ...) defers the
+        creation to the next event-loop turn, by which point the loop is
+        definitely live.
         """
-        print(f"[worker] constructing MonitoringEngine with db={_DB_PATH}")
-
-        # Construct with our own DB path. This runs load_devices_from_db()
-        # and _run_initial_state_check() against desktop/data/*.db, which
-        # is empty on first run and contains only devices this app has
-        # been told about on subsequent runs.
         self._engine = MonitoringEngine(db_path=_DB_PATH)
-
-        # Discard whatever load_devices_from_db() produced. Even if the
-        # file were non-empty, the GUI is the source of truth for which
-        # devices exist in this session; devices are injected explicitly
-        # via register_node.
         self._engine.devices.clear()
 
-        # Apply any registrations that arrived before we were ready (see
-        # note in __init__). Order preserved because _pending_registrations
-        # is a list.
         for device_id, name, ip_address in self._pending_registrations:
             self._inject_device(device_id, name, ip_address)
         self._pending_registrations.clear()
 
-        # Defer timer creation to the next event-loop iteration, when the
-        # thread's event loop is guaranteed to be running.
         QTimer.singleShot(0, self._start_timer)
-
-        print(f"[worker] engine ready, interval={INTERVAL_SECONDS}s")
         self.engineReady.emit()
 
     @Slot()
@@ -149,27 +158,26 @@ class MonitoringWorker(QObject):
         the single-shot deferral in on_thread_started, at a point where
         the thread's event loop is definitely running.
         """
-        # DIAGNOSTIC — remove after Milestone 6 confirmed.
-        print(
-            f"[worker] _start_timer ENTRY on {QThread.currentThread()}, "
-            f"self.thread()={self.thread()}",
-            flush=True,
-        )
-
         self._timer = QTimer(self)
         self._timer.setInterval(INTERVAL_SECONDS * 1000)
         self._timer.timeout.connect(self._on_tick)
         self._timer.start()
-        print(f"[worker] timer started, will tick every {INTERVAL_SECONDS}s")
 
     @Slot()
     def on_stop(self) -> None:
-        """Stop the timer. Called from the GUI thread via queued signal
-        before the thread is quit."""
+        """
+        Handle a shutdown request. Stops the timer and sets the stop flag
+        so no further cycle will start. Called from the GUI thread via
+        queued signal before the thread is quit.
+
+        This cannot interrupt a cycle already inside check_all_devices();
+        that cycle runs to completion before the event loop processes
+        this slot. See module docstring, "Shutdown".
+        """
+        self._stop_requested = True
         if self._timer is not None:
             self._timer.stop()
             self._timer = None
-        print("[worker] stopped")
 
     # ------------------------------------------------------------------
     # Device registration — slots, run on the worker thread
@@ -178,9 +186,6 @@ class MonitoringWorker(QObject):
     @Slot(str, str, str)
     def on_register_node(self, device_id: str, name: str, ip_address: str) -> None:
         """Add a device to the engine. Queued from the GUI thread."""
-        # DIAGNOSTIC — remove after Milestone 6 confirmed.
-        print(f"[worker] on_register_node: {name} ({ip_address})", flush=True)
-
         if self._engine is None:
             # Engine not up yet. Queue it; on_thread_started will apply.
             self._pending_registrations.append((device_id, name, ip_address))
@@ -190,9 +195,6 @@ class MonitoringWorker(QObject):
     @Slot(str)
     def on_unregister_node(self, device_id: str) -> None:
         """Remove a device from the engine. Queued from the GUI thread."""
-        # DIAGNOSTIC — remove after Milestone 6 confirmed.
-        print(f"[worker] on_unregister_node: {device_id}", flush=True)
-
         if self._engine is None:
             # Nothing to unregister if the engine is not up. Drop any
             # pending registration with this id.
@@ -208,31 +210,20 @@ class MonitoringWorker(QObject):
         Build a Device and place it in the engine's dict. Runs on the
         worker thread only.
 
-        The Device constructor accepts device_id, name, ip_address, and a
-        handful of optional tuning parameters; the values here match what
-        MonitoringEngine.load_devices_from_db() would produce for an entry
-        in the devices table. The engine's check_single_device() reads
-        device.timeout, device.retry_count, and the quality thresholds,
-        all of which default to sensible values in the constructor.
+        The ping parameters (retry_count, timeout) are exported as module
+        constants so main_window.py can derive its shutdown wait timeout
+        from the same numbers the engine actually uses.
         """
-        # Skip if already present (re-registration is a no-op).
         if device_id in self._engine.devices:
-            print(f"[worker] _inject_device: {name} already present, skipping", flush=True)
             return
         device = Device(
             device_id=device_id,
             name=name,
             ip_address=ip_address,
-            retry_count=2,
-            timeout=2,
+            retry_count=RETRY_COUNT,
+            timeout=PING_TIMEOUT,
         )
         self._engine.devices[device_id] = device
-        # DIAGNOSTIC — remove after Milestone 6 confirmed.
-        print(
-            f"[worker] _inject_device: added {name} ({ip_address}); "
-            f"engine.devices now has {len(self._engine.devices)} entries",
-            flush=True,
-        )
 
     # ------------------------------------------------------------------
     # Cycle — runs on the worker thread
@@ -248,14 +239,9 @@ class MonitoringWorker(QObject):
         pings, ~3-5s for a handful of devices). That blocking is the point:
         the worker thread exists to absorb it.
         """
-        # DIAGNOSTIC — remove after Milestone 6 confirmed.
-        print(
-            f"[worker] _on_tick ENTRY on {QThread.currentThread()}, "
-            f"engine={'yes' if self._engine else 'no'}, "
-            f"devices={len(self._engine.devices) if self._engine else 0}",
-            flush=True,
-        )
-
+        if self._stop_requested:
+            # Stop was requested between cycles. Do not start a new one.
+            return
         if self._engine is None:
             return
         if not self._engine.devices:

@@ -1,9 +1,13 @@
 """
 Device node — the visual representation of a single device on the canvas.
 
-Milestone 5: carries a real IP address, a monitoring-enabled flag, and a
-status string. Paints the neutral-fill / status-ring / type-icon layout.
-Double-click now emits a signal so the canvas can open the edit dialog.
+Milestone 6: stores the last observed latency, reflects status and latency
+in an auto-updating tooltip, and calls _update_tooltip() from every setter
+that changes displayed data.
+
+Milestone 6 (revision): the type icon is now tinted with the status colour,
+so a green ring frames a green icon, a red ring frames a red icon, and so
+on. The ring remains grey for UNKNOWN, matching the icon.
 """
 
 import uuid
@@ -42,11 +46,11 @@ class DeviceNode(QGraphicsObject):
     # ------------------------------------------------------------------
 
     # Neutral fill, same for every device type. The fill deliberately does
-    # not carry any meaning; status is conveyed by the ring, type by the icon.
+    # not carry any meaning; status is conveyed by the ring and the icon.
     FILL_COLOR = QColor("#f4f5f7")
 
     # Border. Selection is shown by weight and colour of the border, not by
-    # any change to fill or ring, so it cannot be confused with status.
+    # any change to fill, ring, or icon, so it cannot be confused with status.
     BORDER_COLOR = QColor("#1a73e8")
     BORDER_COLOR_SELECTED = QColor("#0b47a1")
     BORDER_WIDTH = 1.5
@@ -55,24 +59,27 @@ class DeviceNode(QGraphicsObject):
     # Name text.
     TEXT_COLOR = QColor("#202124")
 
-    # Status ring colours. The four keys match app/models/device.py's
-    # DeviceStatus enum values, so Milestone 6 can feed them in without a
-    # translation table. The ring is grey until Milestone 6 provides live
-    # values.
+    # Status colours. Used for both the ring stroke and the icon tint, so
+    # the ring-and-icon area reads as a single status colour at a glance.
+    # The four keys match app/models/device.py's DeviceStatus enum values.
     RING_COLOR_UP        = QColor("#34a853")   # green
     RING_COLOR_DEGRADED  = QColor("#fbbc04")   # yellow
     RING_COLOR_DOWN      = QColor("#ea4335")   # red
     RING_COLOR_UNKNOWN   = QColor("#9aa0a6")   # grey
 
-    # Ring geometry. Outer diameter 32px, stroke 3px. The icon draws inside
-    # at 20x20, leaving a small gap between icon and ring.
-    RING_DIAMETER = 32
-    RING_STROKE = 3
+    # Ring geometry.
+    RING_DIAMETER = 36
+    RING_STROKE = 4
     ICON_SIZE = 20
 
-    # Icon tint: dark slate at ~65% opacity. Semi-transparent so the ring
-    # dominates the visual hierarchy.
-    ICON_TINT = QColor(60, 64, 67, 165)
+    # Alpha for the icon tint. 165 keeps the icon legible as a shape while
+    # still reading as "this colour" at a glance.
+    ICON_TINT_ALPHA = 165
+
+    # Alpha for the fill inside the ring. Very low, so the ring stroke still
+    # dominates; but enough that the interior of the ring reads as the same
+    # colour family as the ring.
+    RING_FILL_ALPHA = 38
 
     def __init__(
         self,
@@ -92,9 +99,14 @@ class DeviceNode(QGraphicsObject):
         self.monitoring_enabled: bool = monitoring_enabled
 
         # Status string, mirroring DeviceStatus values as plain strings so
-        # the desktop app does not import app/ at this milestone. Milestone 6
-        # replaces this with whatever MonitoringEngine reports.
+        # the desktop app does not need to translate between enum and
+        # display. The worker feeds "UP" / "DEGRADED" / "DOWN" / "UNKNOWN".
         self.status: str = status
+
+        # Last observed latency in milliseconds, or None if the last check
+        # did not produce a latency (device DOWN, or no cycle completed yet).
+        # Displayed only in the tooltip; not part of the node's visual.
+        self._last_latency_ms: float | None = None
 
         self._rect = QRectF(0, 0, self.WIDTH, self.HEIGHT)
 
@@ -105,6 +117,10 @@ class DeviceNode(QGraphicsObject):
         )
         self.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
         self.setZValue(0)
+
+        # Populate the tooltip before any status update arrives, so it is
+        # correct on the very first hover.
+        self._update_tooltip()
 
         if position is not None:
             self.setPos(position)
@@ -135,20 +151,32 @@ class DeviceNode(QGraphicsObject):
             self._rect, self.CORNER_RADIUS, self.CORNER_RADIUS
         )
 
-        # 2. Status ring, centred horizontally, in the upper third.
+        # 2. Status colour, shared by the ring stroke, the ring interior
+        # fill, and the icon tint so the whole indicator reads as one colour.
+        status_color = self._ring_color_for_status()
+
         ring_cx = self.WIDTH / 2
         ring_cy = 22.0
         ring_radius = self.RING_DIAMETER / 2
 
-        ring_color = self._ring_color_for_status()
-        ring_pen = QPen(ring_color, self.RING_STROKE)
+        # 2a. Ring interior fill: a very faint tint of the same colour.
+        fill = QColor(status_color)
+        fill.setAlpha(self.RING_FILL_ALPHA)
+        painter.setBrush(QBrush(fill))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(ring_cx, ring_cy), ring_radius, ring_radius)
+
+        # 2b. Ring stroke: full-opacity, thickened.
+        ring_pen = QPen(status_color, self.RING_STROKE)
         ring_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(ring_pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawEllipse(QPointF(ring_cx, ring_cy), ring_radius, ring_radius)
 
-        # 3. Type icon, tinted, drawn inside the ring.
-        pm = icon_pixmap(self.device_type, self.ICON_TINT, self.ICON_SIZE)
+        # 3. Type icon, tinted with the status colour.
+        icon_tint = QColor(status_color)
+        icon_tint.setAlpha(self.ICON_TINT_ALPHA)
+        pm = icon_pixmap(self.device_type, icon_tint, self.ICON_SIZE)
         icon_x = int(ring_cx - self.ICON_SIZE / 2)
         icon_y = int(ring_cy - self.ICON_SIZE / 2)
         painter.drawPixmap(icon_x, icon_y, pm)
@@ -172,8 +200,8 @@ class DeviceNode(QGraphicsObject):
         )
 
     def _ring_color_for_status(self) -> QColor:
-        """Map the status string to a ring colour. Unknown statuses are
-        treated as UNKNOWN."""
+        """Map the status string to a colour. Unknown statuses are treated
+        as UNKNOWN (grey). Used for both the ring and the icon tint."""
         table = {
             "UP": self.RING_COLOR_UP,
             "DEGRADED": self.RING_COLOR_DEGRADED,
@@ -211,21 +239,38 @@ class DeviceNode(QGraphicsObject):
             return
         self.device_type = device_type
         self._invalidate_cache()
+        self._update_tooltip()
 
     def set_status(self, status: str) -> None:
-        """Set the status string. Milestone 6 calls this from the monitoring
-        result callback. At Milestone 5 nothing calls it, so every node stays
-        UNKNOWN and every ring is grey."""
+        """
+        Set the status string. Called by the canvas from the worker's
+        cycleComplete slot. Idempotent: no-op if the status is unchanged,
+        so repeated cycles reporting the same status do not thrash the
+        pixmap cache.
+        """
         if status == self.status:
             return
         self.status = status
         self._invalidate_cache()
+        self._update_tooltip()
+
+    def set_latency(self, latency_ms) -> None:
+        """
+        Store the latest observed latency for the tooltip. Accepts None for
+        devices whose last check produced no latency (DOWN, or no cycle yet).
+
+        Does not invalidate the pixmap cache: latency is not drawn on the
+        node, only shown in the tooltip.
+        """
+        self._last_latency_ms = latency_ms
+        self._update_tooltip()
 
     def set_monitoring_enabled(self, enabled: bool) -> None:
         if enabled == self.monitoring_enabled:
             return
         self.monitoring_enabled = enabled
         self._invalidate_cache()
+        self._update_tooltip()
 
     def _invalidate_cache(self) -> None:
         """Force a re-render of the cached pixmap. Any method that changes a
@@ -233,6 +278,26 @@ class DeviceNode(QGraphicsObject):
         keeps the stale painting on screen."""
         self.setCacheMode(QGraphicsItem.CacheMode.NoCache)
         self.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
+
+    def _update_tooltip(self) -> None:
+        """
+        Rebuild the tooltip from current state. Cheap (string formatting
+        only); called from every setter and from __init__.
+        """
+        latency = (
+            f"{self._last_latency_ms:.1f} ms"
+            if self._last_latency_ms is not None
+            else "—"
+        )
+        monitoring = "on" if self.monitoring_enabled else "off"
+        self.setToolTip(
+            f"{self.name}\n"
+            f"IP: {self.ip_address or '(unset)'}\n"
+            f"Type: {self.device_type.label}\n"
+            f"Status: {self.status}\n"
+            f"Latency: {latency}\n"
+            f"Monitoring: {monitoring}"
+        )
 
     def centre(self) -> QPointF:
         return self._rect.center()

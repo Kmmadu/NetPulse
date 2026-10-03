@@ -1,7 +1,9 @@
 """
 Topology canvas — the central drawing surface for the network map.
 
-Milestone 5: adding and editing devices goes through DeviceDialog.
+Milestone 6: registers created nodes with the monitoring worker, unregisters
+deleted nodes, and updates each node's status ring from the worker's
+cycle results.
 """
 
 from PySide6.QtWidgets import (
@@ -9,7 +11,7 @@ from PySide6.QtWidgets import (
     QGraphicsScene,
     QMenu,
 )
-from PySide6.QtCore import Qt, QPointF
+from PySide6.QtCore import Qt, QPointF, Slot
 from PySide6.QtGui import QPainter, QKeyEvent, QContextMenuEvent, QCursor
 
 from ui.device_node import DeviceNode
@@ -50,6 +52,59 @@ class TopologyCanvas(QGraphicsView):
 
         self._connections: list[ConnectionItem] = []
         self._connect_source: DeviceNode | None = None
+
+        # Set by attach_worker() at MainWindow construction. Until then the
+        # canvas operates in "no monitoring" mode (all nodes UNKNOWN).
+        self._worker = None
+
+    # ------------------------------------------------------------------
+    # Worker attachment
+    # ------------------------------------------------------------------
+
+    def attach_worker(self, worker) -> None:
+        """
+        Give the canvas a reference to the monitoring worker so it can
+        register / unregister nodes via the worker's signals. Called once
+        by MainWindow before the thread starts.
+        """
+        self._worker = worker
+
+    @Slot(list)
+    def on_cycle_complete(self, results: list) -> None:
+        """
+        GUI-thread slot: update every node from the worker's per-cycle results.
+
+        Results are dicts produced by MonitoringEngine.check_all_devices().
+        Fields we use:
+          device_id        -> matches DeviceNode.device_id
+          current_status   -> "UP" | "DEGRADED" | "DOWN" | "UNKNOWN"
+          latency_ms       -> optional; stored on the node for the tooltip
+          ping_details     -> optional dict with min/max/packet_loss
+        """
+        # Build a lookup for O(n) rather than O(n*m).
+        by_id = {
+            item.device_id: item
+            for item in self._scene.items()
+            if isinstance(item, DeviceNode)
+        }
+
+        for result in results:
+            device_id = result.get("device_id")
+            node = by_id.get(device_id)
+            if node is None:
+                # The device exists in the engine but not on the canvas;
+                # most likely a node that was just deleted and whose
+                # unregister signal has not yet been processed by the
+                # worker. Skip silently.
+                continue
+
+            status = result.get("current_status")
+            if isinstance(status, str):
+                node.set_status(status)
+
+            # Populate tooltip data. Latency may be None for DOWN devices;
+            # set_latency handles that.
+            node.set_latency(result.get("latency_ms"))
 
     # ------------------------------------------------------------------
     # Background
@@ -118,14 +173,29 @@ class TopologyCanvas(QGraphicsView):
         node.doubleClicked.connect(self._on_node_double_clicked)
 
         self._scene.addItem(node)
+
+        # Register with the worker if monitoring is enabled for this node.
+        # The worker will skip it if the engine is not yet up (registration
+        # is queued and applied once on_thread_started runs).
+        if self._worker is not None and monitoring_enabled and ip_address:
+            self._worker.registerNode.emit(node.device_id, node.name, node.ip_address)
+
         return node
 
     def _on_node_double_clicked(self, node: DeviceNode) -> None:
         self.edit_device(node)
 
     def edit_device(self, node: DeviceNode) -> None:
-        """Open the edit dialog seeded with the node's current values, and
-        apply the changes if the user accepts. No-op on cancel."""
+        """
+        Open the edit dialog seeded with the node's current values. If the
+        user accepts, apply the changes to the node and, if necessary,
+        re-register or unregister it with the worker (name or IP change,
+        or monitoring enabled/disabled).
+        """
+        old_ip = node.ip_address
+        old_monitoring = node.monitoring_enabled
+        old_name = node.name
+
         dialog = DeviceDialog(
             self,
             title=f"Edit '{node.name}'",
@@ -141,13 +211,27 @@ class TopologyCanvas(QGraphicsView):
         node.ip_address = dialog.ip_address
         node.set_device_type(dialog.device_type)
         node.set_monitoring_enabled(dialog.monitoring_enabled)
-
-        # Name and IP are not cache-invalidating setters on DeviceNode; force
-        # a repaint so the name change is visible immediately.
         node._invalidate_cache()
 
+        # Inform the worker of the change. The simplest correct approach:
+        # unregister and re-register if anything relevant changed. The
+        # unregister slot is a queued signal, so it will run between
+        # worker events and cannot race the timer.
+        if self._worker is not None:
+            relevant_change = (
+                old_ip != node.ip_address
+                or old_monitoring != node.monitoring_enabled
+                or old_name != node.name
+            )
+            if relevant_change:
+                self._worker.unregisterNode.emit(node.device_id)
+                if node.monitoring_enabled and node.ip_address:
+                    self._worker.registerNode.emit(
+                        node.device_id, node.name, node.ip_address
+                    )
+
     # ------------------------------------------------------------------
-    # Connection operations
+    # Connection operations (unchanged from Milestone 5)
     # ------------------------------------------------------------------
 
     def _find_existing_connection(self, a: DeviceNode, b: DeviceNode):
@@ -197,6 +281,10 @@ class TopologyCanvas(QGraphicsView):
                     removed += 1
 
         for node in selected_nodes:
+            # Unregister from the worker first so it stops pinging the
+            # device on its next cycle.
+            if self._worker is not None:
+                self._worker.unregisterNode.emit(node.device_id)
             self._scene.removeItem(node)
             removed += 1
 
@@ -208,7 +296,7 @@ class TopologyCanvas(QGraphicsView):
         return removed
 
     # ------------------------------------------------------------------
-    # Connection mode
+    # Connection mode (unchanged)
     # ------------------------------------------------------------------
 
     def _begin_connect(self, source: DeviceNode) -> None:
@@ -238,7 +326,7 @@ class TopologyCanvas(QGraphicsView):
         super().mousePressEvent(event)
 
     # ------------------------------------------------------------------
-    # Context menu
+    # Context menu (unchanged, plus the edit action from Milestone 5)
     # ------------------------------------------------------------------
 
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
@@ -252,7 +340,6 @@ class TopologyCanvas(QGraphicsView):
 
         menu = QMenu(self)
 
-        # --- Case 1: right-click on a connection edge ---
         if isinstance(item, ConnectionItem):
             if not item.isSelected():
                 self._scene.clearSelection()
@@ -264,7 +351,6 @@ class TopologyCanvas(QGraphicsView):
                 self.delete_selected_items()
             return
 
-        # --- Case 2: right-click on a node ---
         if isinstance(item, DeviceNode):
             if not item.isSelected():
                 self._scene.clearSelection()
@@ -300,10 +386,6 @@ class TopologyCanvas(QGraphicsView):
                 item.set_device_type(data)
             return
 
-        # --- Case 3: empty canvas ---
-        # The Add submenu still lists the five types, but each entry now
-        # opens the dialog so the user can fill in the IP before the node
-        # is committed. Cancel means no node is created.
         add_menu = menu.addMenu("Add device node")
         for dtype in DeviceType:
             act = add_menu.addAction(dtype.label)
@@ -321,8 +403,6 @@ class TopologyCanvas(QGraphicsView):
     ) -> None:
         self._node_counter += 1
         suggested_name = f"device-{self._node_counter}"
-        # Undo the increment if the user cancels; otherwise the counter
-        # would skip numbers for nodes that were never created.
         dialog = DeviceDialog(
             self,
             title="Add device",
@@ -344,7 +424,7 @@ class TopologyCanvas(QGraphicsView):
         )
 
     # ------------------------------------------------------------------
-    # Keyboard
+    # Keyboard (unchanged)
     # ------------------------------------------------------------------
 
     def keyPressEvent(self, event: QKeyEvent) -> None:

@@ -5,9 +5,14 @@ Milestone 6: stores the last observed latency, reflects status and latency
 in an auto-updating tooltip, and calls _update_tooltip() from every setter
 that changes displayed data.
 
-Milestone 6 (revision): the type icon is now tinted with the status colour,
-so a green ring frames a green icon, a red ring frames a red icon, and so
-on. The ring remains grey for UNKNOWN, matching the icon.
+Milestone 6 (revision): the type icon is tinted with the status colour.
+
+Milestone 7.75: the ring-and-icon colour is the maximum of two signals —
+the device status (UP / DEGRADED / DOWN / UNKNOWN) and the engine's
+suboptimality severity (none / mild / moderate / severe / critical). A
+device that is technically reachable but whose link quality is degraded
+shows an amber or red ring-and-icon, not green. The severity is reflected
+in the ring itself; the tooltip shows the reason.
 """
 
 import uuid
@@ -46,11 +51,13 @@ class DeviceNode(QGraphicsObject):
     # ------------------------------------------------------------------
 
     # Neutral fill, same for every device type. The fill deliberately does
-    # not carry any meaning; status is conveyed by the ring and the icon.
+    # not carry any meaning; status and quality are conveyed by the ring
+    # and the icon.
     FILL_COLOR = QColor("#f4f5f7")
 
     # Border. Selection is shown by weight and colour of the border, not by
-    # any change to fill, ring, or icon, so it cannot be confused with status.
+    # any change to fill, ring, or icon, so it cannot be confused with
+    # status or quality.
     BORDER_COLOR = QColor("#1a73e8")
     BORDER_COLOR_SELECTED = QColor("#0b47a1")
     BORDER_WIDTH = 1.5
@@ -59,13 +66,14 @@ class DeviceNode(QGraphicsObject):
     # Name text.
     TEXT_COLOR = QColor("#202124")
 
-    # Status colours. Used for both the ring stroke and the icon tint, so
-    # the ring-and-icon area reads as a single status colour at a glance.
-    # The four keys match app/models/device.py's DeviceStatus enum values.
+    # Colours used by the effective-ring computation. The status colours
+    # (green / amber / red / grey) are the same ones used since Milestone 6.
+    # One additional colour is used for the worst suboptimal severity.
     RING_COLOR_UP        = QColor("#34a853")   # green
-    RING_COLOR_DEGRADED  = QColor("#fbbc04")   # yellow
+    RING_COLOR_DEGRADED  = QColor("#fbbc04")   # amber
     RING_COLOR_DOWN      = QColor("#ea4335")   # red
     RING_COLOR_UNKNOWN   = QColor("#9aa0a6")   # grey
+    RING_COLOR_CRITICAL  = QColor("#a50e0e")   # dark red, for severity=critical
 
     # Ring geometry.
     RING_DIAMETER = 36
@@ -98,15 +106,20 @@ class DeviceNode(QGraphicsObject):
         self.device_type: DeviceType = device_type
         self.monitoring_enabled: bool = monitoring_enabled
 
-        # Status string, mirroring DeviceStatus values as plain strings so
-        # the desktop app does not need to translate between enum and
-        # display. The worker feeds "UP" / "DEGRADED" / "DOWN" / "UNKNOWN".
+        # Status string, mirroring DeviceStatus values as plain strings.
+        # The worker feeds "UP" / "DEGRADED" / "DOWN" / "UNKNOWN".
         self.status: str = status
 
         # Last observed latency in milliseconds, or None if the last check
         # did not produce a latency (device DOWN, or no cycle completed yet).
         # Displayed only in the tooltip; not part of the node's visual.
         self._last_latency_ms: float | None = None
+
+        # Suboptimal state. Populated by set_suboptimal() from the cycle
+        # result. Severity is one of "none", "mild", "moderate", "severe",
+        # "critical". Reasons is a list of short strings from the engine.
+        self._suboptimal_severity: str = "none"
+        self._suboptimal_reasons: list[str] = []
 
         self._rect = QRectF(0, 0, self.WIDTH, self.HEIGHT)
 
@@ -151,30 +164,31 @@ class DeviceNode(QGraphicsObject):
             self._rect, self.CORNER_RADIUS, self.CORNER_RADIUS
         )
 
-        # 2. Status colour, shared by the ring stroke, the ring interior
-        # fill, and the icon tint so the whole indicator reads as one colour.
-        status_color = self._ring_color_for_status()
+        # 2. Ring-and-icon colour, chosen as the maximum of the device
+        # status and the engine's suboptimal severity. This is the single
+        # visual channel that reflects "how healthy is this link overall".
+        ring_color = self._effective_ring_color()
 
         ring_cx = self.WIDTH / 2
         ring_cy = 22.0
         ring_radius = self.RING_DIAMETER / 2
 
         # 2a. Ring interior fill: a very faint tint of the same colour.
-        fill = QColor(status_color)
+        fill = QColor(ring_color)
         fill.setAlpha(self.RING_FILL_ALPHA)
         painter.setBrush(QBrush(fill))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(QPointF(ring_cx, ring_cy), ring_radius, ring_radius)
 
         # 2b. Ring stroke: full-opacity, thickened.
-        ring_pen = QPen(status_color, self.RING_STROKE)
+        ring_pen = QPen(ring_color, self.RING_STROKE)
         ring_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(ring_pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawEllipse(QPointF(ring_cx, ring_cy), ring_radius, ring_radius)
 
-        # 3. Type icon, tinted with the status colour.
-        icon_tint = QColor(status_color)
+        # 3. Type icon, tinted with the same colour.
+        icon_tint = QColor(ring_color)
         icon_tint.setAlpha(self.ICON_TINT_ALPHA)
         pm = icon_pixmap(self.device_type, icon_tint, self.ICON_SIZE)
         icon_x = int(ring_cx - self.ICON_SIZE / 2)
@@ -199,16 +213,51 @@ class DeviceNode(QGraphicsObject):
             self.name,
         )
 
-    def _ring_color_for_status(self) -> QColor:
-        """Map the status string to a colour. Unknown statuses are treated
-        as UNKNOWN (grey). Used for both the ring and the icon tint."""
-        table = {
-            "UP": self.RING_COLOR_UP,
-            "DEGRADED": self.RING_COLOR_DEGRADED,
-            "DOWN": self.RING_COLOR_DOWN,
-            "UNKNOWN": self.RING_COLOR_UNKNOWN,
-        }
-        return table.get(self.status, self.RING_COLOR_UNKNOWN)
+    def _effective_ring_color(self) -> QColor:
+        """
+        Compose the ring-and-icon colour from the two signals that matter:
+        the device status and the engine's suboptimality severity.
+
+        Rule: the colour is the maximum of the two. Status is authoritative
+        for the strong states (DOWN, DEGRADED, UNKNOWN); when the device is
+        UP, suboptimality can promote the colour from green to amber, red,
+        or dark red depending on severity.
+
+        Why: a device that is technically reachable but whose link quality
+        is degraded should not look identical to a healthy one. The engine
+        reports `mild` from around 100 ms latency and `severe` at the same
+        point DEGRADED is committed. The ring is the one visual that
+        reflects this without needing to read the tooltip.
+
+        Mappings:
+            DOWN                                 -> red (override)
+            DEGRADED                             -> amber (override)
+            UNKNOWN                              -> grey  (override)
+            UP + severity none                   -> green
+            UP + severity mild / moderate        -> amber
+            UP + severity severe                 -> red
+            UP + severity critical               -> dark red
+        """
+        # Status overrides take priority: these are the strongest signals
+        # and their colour should not be diluted by suboptimality.
+        if self.status == "DOWN":
+            return self.RING_COLOR_DOWN
+        if self.status == "DEGRADED":
+            return self.RING_COLOR_DEGRADED
+        if self.status == "UNKNOWN":
+            return self.RING_COLOR_UNKNOWN
+
+        # Status is UP (or an unrecognised value): let suboptimality promote
+        # the colour. Unknown severities fall through to green so a future
+        # engine that reports a new severity degrades to the safest visual.
+        severity = self._suboptimal_severity
+        if severity == "critical":
+            return self.RING_COLOR_CRITICAL
+        if severity == "severe":
+            return self.RING_COLOR_DOWN
+        if severity in ("moderate", "mild"):
+            return self.RING_COLOR_DEGRADED
+        return self.RING_COLOR_UP
 
     # ------------------------------------------------------------------
     # QGraphicsItem hooks
@@ -272,6 +321,32 @@ class DeviceNode(QGraphicsObject):
         self._invalidate_cache()
         self._update_tooltip()
 
+    def set_suboptimal(self, severity: str, reasons: list) -> None:
+        """
+        Set the suboptimality state from a cycle result. Called by the
+        canvas's on_cycle_complete slot. Idempotent: no-op if severity and
+        reasons are unchanged, so repeated cycles do not thrash the pixmap
+        cache.
+
+        `severity` is one of the engine's SuboptimalSeverity values as a
+        string: "none", "mild", "moderate", "severe", "critical". Unknown
+        values are treated as "none" (no colour promotion), so a future
+        engine that reports a new severity degrades to the safest visual.
+
+        The severity affects the ring-and-icon colour via
+        _effective_ring_color(). The reasons are shown in the tooltip.
+        """
+        reasons_list = list(reasons) if reasons else []
+        if (
+            severity == self._suboptimal_severity
+            and reasons_list == self._suboptimal_reasons
+        ):
+            return
+        self._suboptimal_severity = severity or "none"
+        self._suboptimal_reasons = reasons_list
+        self._invalidate_cache()
+        self._update_tooltip()
+
     def _invalidate_cache(self) -> None:
         """Force a re-render of the cached pixmap. Any method that changes a
         visual attribute must call this; DeviceCoordinateCache otherwise
@@ -283,6 +358,12 @@ class DeviceNode(QGraphicsObject):
         """
         Rebuild the tooltip from current state. Cheap (string formatting
         only); called from every setter and from __init__.
+
+        The quality line reflects what the ring colour is currently
+        showing, so the two are consistent: if the ring is amber because
+        of a mild suboptimality, the tooltip says so; if the device is
+        DOWN, the tooltip says DOWN and the quality line is suppressed
+        (the DOWN alert takes precedence in the visual narrative).
         """
         latency = (
             f"{self._last_latency_ms:.1f} ms"
@@ -290,14 +371,34 @@ class DeviceNode(QGraphicsObject):
             else "—"
         )
         monitoring = "on" if self.monitoring_enabled else "off"
-        self.setToolTip(
-            f"{self.name}\n"
-            f"IP: {self.ip_address or '(unset)'}\n"
-            f"Type: {self.device_type.label}\n"
-            f"Status: {self.status}\n"
-            f"Latency: {latency}\n"
-            f"Monitoring: {monitoring}"
-        )
+
+        # Quality line: only meaningful when the device is reachable. When
+        # the device is DOWN or UNKNOWN, the status itself dominates and a
+        # quality comment would be confusing.
+        if self.status in ("DOWN", "UNKNOWN"):
+            quality_line = None
+        elif self._suboptimal_severity == "none":
+            quality_line = "Quality: good"
+        elif self._suboptimal_reasons:
+            quality_line = (
+                f"Quality: {self._suboptimal_severity} — "
+                + "; ".join(self._suboptimal_reasons)
+            )
+        else:
+            quality_line = f"Quality: {self._suboptimal_severity}"
+
+        lines = [
+            self.name,
+            f"IP: {self.ip_address or '(unset)'}",
+            f"Type: {self.device_type.label}",
+            f"Status: {self.status}",
+            f"Latency: {latency}",
+            f"Monitoring: {monitoring}",
+        ]
+        if quality_line is not None:
+            lines.append(quality_line)
+
+        self.setToolTip("\n".join(lines))
 
     def centre(self) -> QPointF:
         return self._rect.center()

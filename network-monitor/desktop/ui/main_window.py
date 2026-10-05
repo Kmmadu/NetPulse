@@ -3,17 +3,24 @@ Main application window.
 
 Milestone 6: owns the monitoring QThread and worker, wires the worker's
 cycleComplete signal to the canvas, and stops everything cleanly on close.
+
+Milestone 7.5: adds a Settings menu with SMTP Configuration, and prompts
+for SMTP configuration on first run if alerting is not configured.
 """
 
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout
-from PySide6.QtCore import QThread, Qt
+from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QMessageBox
+from PySide6.QtGui import QAction
+from PySide6.QtCore import QThread, Qt, QMetaObject, QTimer
 
 from ui.canvas import TopologyCanvas
+from ui.config_dialog import ConfigDialog
+from ui import config_manager
 from monitoring_worker import (
     MonitoringWorker,
     PING_COUNT,
     PING_TIMEOUT,
     RETRY_COUNT,
+    INTERVAL_SECONDS,
 )
 
 
@@ -34,6 +41,17 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(container)
 
         # ------------------------------------------------------------------
+        # Menu bar
+        # ------------------------------------------------------------------
+        # Only one menu for now: Settings, with SMTP Configuration. Future
+        # milestones may add entries here (log retention, theme, etc.); the
+        # menu is a QMenuBar so adding them is a one-line change.
+        settings_menu = self.menuBar().addMenu("&Settings")
+        smtp_action = QAction("&SMTP Configuration…", self)
+        smtp_action.triggered.connect(self._open_config_dialog)
+        settings_menu.addAction(smtp_action)
+
+        # ------------------------------------------------------------------
         # Monitoring worker and thread
         # ------------------------------------------------------------------
         # The worker is created on the GUI thread, then moved to the worker
@@ -47,12 +65,12 @@ class MainWindow(QMainWindow):
         self._worker.moveToThread(self._worker_thread)
 
         # Lifecycle wiring.
-        #   thread.started       -> worker.on_thread_started  (builds engine, starts timer)
+        #   thread.started       -> worker.on_thread_started
         #   worker.engineReady   -> status bar update
-        #   worker.cycleComplete -> canvas.on_cycle_complete (updates node statuses)
+        #   worker.cycleComplete -> canvas.on_cycle_complete
         #   worker.registerNode  -> worker.on_register_node
         #   worker.unregisterNode -> worker.on_unregister_node
-        #   GUI close            -> worker.on_stop, then thread.quit/wait
+        #   GUI close            -> worker.on_stop (blocking), then thread.quit/wait
         #
         # The `started` connection is explicitly queued. QThread.started is
         # emitted from the newly started thread; a QueuedConnection ensures
@@ -81,14 +99,71 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Starting monitoring engine…")
 
+        # ------------------------------------------------------------------
+        # First-run prompt for SMTP configuration
+        # ------------------------------------------------------------------
+        # Deferred via a single-shot timer so it runs after the event loop
+        # has started and the window is shown. Opening a modal dialog
+        # during __init__ (before show()) can behave oddly on some
+        # platforms, notably Wayland; deferring is cheap and reliable.
+        QTimer.singleShot(500, self._prompt_for_config_if_needed)
+
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
 
     def _on_engine_ready(self) -> None:
         self.statusBar().showMessage(
-            "Monitoring active — cycle interval 10s."
+            f"Monitoring active — cycle interval {INTERVAL_SECONDS}s."
         )
+
+    # ------------------------------------------------------------------
+    # SMTP configuration
+    # ------------------------------------------------------------------
+
+    def _prompt_for_config_if_needed(self) -> None:
+        """
+        Open the SMTP config dialog on startup if alerting is not already
+        configured. If it is configured, do nothing.
+        """
+        if config_manager.is_alerting_configured():
+            return
+        self.statusBar().showMessage(
+            "SMTP is not configured — alerting disabled.", 5000
+        )
+        self._open_config_dialog()
+
+    def _open_config_dialog(self) -> None:
+        """
+        Open the SMTP config dialog, and if the user accepts, write the
+        values to desktop/.env and apply them to the running process. The
+        status bar reports the outcome; the dialog reports nothing itself
+        once it has closed.
+        """
+        dialog = ConfigDialog(self)
+        if dialog.exec() != ConfigDialog.DialogCode.Accepted:
+            return
+
+        try:
+            config_manager.write_env(dialog.values)
+            config_manager.apply_to_process()
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Configuration save failed",
+                f"Could not write SMTP configuration:\n\n{exc}",
+            )
+            return
+
+        if config_manager.is_alerting_configured():
+            self.statusBar().showMessage(
+                "SMTP configuration saved and verified.", 5000
+            )
+        else:
+            self.statusBar().showMessage(
+                "SMTP configuration saved, but the connection test failed.",
+                5000,
+            )
 
     # ------------------------------------------------------------------
     # Shutdown
@@ -116,26 +191,43 @@ class MainWindow(QMainWindow):
         """
         Stop the worker cooperatively, then quit and join the thread.
 
-        Order:
-          1. Ask the worker to stop (queued; runs on worker thread).
-             Sets the stop flag and stops the timer. Any cycle currently
-             in progress runs to completion; no new cycle starts.
+        Order and mechanism:
+          1. Invoke worker.on_stop BLOCKING on the worker thread. This
+             runs the timer stop + deleteLater + reference drop to
+             completion before we return, so the worker's QTimer is
+             actually gone by the time the thread's event loop exits.
+             This is the difference between a clean shutdown and one
+             where the QTimer survives to be finalized by the main
+             thread during interpreter teardown, producing the
+             "QObject::killTimer: Timers cannot be stopped from another
+             thread" warnings.
           2. Quit the thread's event loop.
-          3. Wait for the thread to exit, using a timeout derived from the
-             ping parameters. If that wait fails, fall back to terminate()
-             — which is documented as unsafe but is still preferable to a
-             hung application.
+          3. Wait for the thread to exit, using a timeout derived from
+             the ping parameters. If that wait fails, fall back to
+             terminate(), which is documented as unsafe but is still
+             preferable to a hung application.
 
-        QThread.terminate() is a real risk when the target thread might be
-        running Python bytecode (which it is here whenever a cycle is in
-        flight). Forced cancellation can leave the interpreter and CPython
-        refcounts in an inconsistent state, which cascades into stray
-        exceptions in unrelated slots, dangling glib event sources, and a
-        segfault on exit. The wait timeout is sized to make this fallback
-        practically unreachable; if it does fire, something is genuinely
-        wrong and we accept the risk rather than hang.
+        Why BlockingQueuedConnection and not a signal emit: emitting a
+        queued signal returns immediately and the queued slot invocation
+        is merely *enqueued* on the worker thread's event queue. A
+        subsequent thread.quit() is also enqueued. There is no ordering
+        guarantee between the two beyond FIFO, and more importantly no
+        guarantee that the stop slot has actually *run* by the time the
+        thread's event loop processes the quit. A race is possible in
+        which quit is processed first and the timer is left un-stopped.
+        BlockingQueuedConnection removes the race: the caller waits until
+        the slot has finished executing on the worker thread.
+
+        BlockingQueuedConnection must not be used between objects on the
+        same thread (it deadlocks). Here the caller is the GUI thread and
+        the callee lives on the worker thread, so it is the correct
+        mechanism.
         """
-        self._worker.stop.emit()
+        QMetaObject.invokeMethod(
+            self._worker,
+            "on_stop",
+            Qt.ConnectionType.BlockingQueuedConnection,
+        )
 
         self._worker_thread.quit()
         wait_ms = self._shutdown_wait_ms()

@@ -4,6 +4,15 @@ Topology canvas — the central drawing surface for the network map.
 Milestone 6: registers created nodes with the monitoring worker, unregisters
 deleted nodes, and updates each node's status ring from the worker's
 cycle results.
+
+Milestone 7.75: forwards the engine's per-cycle suboptimal report to each
+node so it can promote its ring colour when link quality is degraded.
+
+Milestone 7.85 (this change): editing a device's IP or name re-registers
+it without unregistering first, so the engine's Device object (and its
+state-machine memory: status, down_since, sample windows) survives an
+edit. This is what allows a recovery alert to fire when a device that was
+DOWN has its IP corrected to a reachable one.
 """
 
 from PySide6.QtWidgets import (
@@ -79,7 +88,19 @@ class TopologyCanvas(QGraphicsView):
           device_id        -> matches DeviceNode.device_id
           current_status   -> "UP" | "DEGRADED" | "DOWN" | "UNKNOWN"
           latency_ms       -> optional; stored on the node for the tooltip
-          ping_details     -> optional dict with min/max/packet_loss
+          suboptimal       -> optional dict from the engine's suboptimal
+                              detector:
+                              {
+                                'severity': 'none'|'mild'|'moderate'|
+                                            'severe'|'critical',
+                                'reasons': [str, ...],
+                                'quality_impact': int,
+                                'trend': str,
+                                ...
+                              }
+                              Missing or malformed values degrade to
+                              "no badge", which is the correct visual
+                              default.
         """
         # Build a lookup for O(n) rather than O(n*m).
         by_id = {
@@ -105,6 +126,19 @@ class TopologyCanvas(QGraphicsView):
             # Populate tooltip data. Latency may be None for DOWN devices;
             # set_latency handles that.
             node.set_latency(result.get("latency_ms"))
+
+            # Suboptimal indicator. The engine attaches a per-cycle
+            # suboptimal report to each result as `result['suboptimal']`.
+            # If the key is missing, or the value is not a dict, or the
+            # severity is not one the node knows, the node stays green
+            # for a reachable device (no promotion).
+            suboptimal = result.get("suboptimal") or {}
+            if isinstance(suboptimal, dict):
+                severity = suboptimal.get("severity", "none")
+                reasons = suboptimal.get("reasons", [])
+                if not isinstance(reasons, list):
+                    reasons = []
+                node.set_suboptimal(severity, reasons)
 
     # ------------------------------------------------------------------
     # Background
@@ -188,9 +222,26 @@ class TopologyCanvas(QGraphicsView):
     def edit_device(self, node: DeviceNode) -> None:
         """
         Open the edit dialog seeded with the node's current values. If the
-        user accepts, apply the changes to the node and, if necessary,
-        re-register or unregister it with the worker (name or IP change,
-        or monitoring enabled/disabled).
+        user accepts, apply the changes to the node and inform the worker
+        if the changes affect what the engine should be doing for this
+        device.
+
+        Re-registration semantics (important):
+          The worker's _inject_device() updates an existing Device in
+          place rather than constructing a new one, so re-registering a
+          device whose id already exists is safe and preserves its state
+          machine memory (status, down_since, fail count, sample windows).
+          We therefore only unregister when monitoring is being turned
+          off; for all other edits (name change, IP change, monitoring
+          stays on) we re-register and let _inject_device update the
+          fields.
+
+          The old behaviour — unregister then re-register on any relevant
+          change — discarded the Device object and reset its status to
+          UNKNOWN. A device that was DOWN and whose IP was corrected
+          looked like a fresh UNKNOWN device on the next check, so the
+          DOWN → UP transition never fired and the recovery alert was
+          never sent.
         """
         old_ip = node.ip_address
         old_monitoring = node.monitoring_enabled
@@ -213,22 +264,35 @@ class TopologyCanvas(QGraphicsView):
         node.set_monitoring_enabled(dialog.monitoring_enabled)
         node._invalidate_cache()
 
-        # Inform the worker of the change. The simplest correct approach:
-        # unregister and re-register if anything relevant changed. The
-        # unregister slot is a queued signal, so it will run between
-        # worker events and cannot race the timer.
-        if self._worker is not None:
-            relevant_change = (
-                old_ip != node.ip_address
-                or old_monitoring != node.monitoring_enabled
+        if self._worker is None:
+            return
+
+        # Case analysis for what to tell the worker. The three signals
+        # the worker exposes are registerNode (add or update), and
+        # unregisterNode (remove). There is no "update" signal; a
+        # registerNode call for an existing device_id is the update path.
+        monitoring_was_on = old_monitoring
+        monitoring_is_on = node.monitoring_enabled
+
+        if monitoring_was_on and not monitoring_is_on:
+            # Monitoring turned off: remove from the engine entirely.
+            self._worker.unregisterNode.emit(node.device_id)
+            return
+
+        if monitoring_is_on and node.ip_address:
+            # Either monitoring just turned on, or monitoring was already
+            # on and something else changed (name, IP, or nothing — we
+            # re-register unconditionally so the worker sees the latest
+            # fields, and _inject_device updates in place if the device
+            # already exists). The cost of the extra call is negligible.
+            if (
+                not monitoring_was_on
+                or old_ip != node.ip_address
                 or old_name != node.name
-            )
-            if relevant_change:
-                self._worker.unregisterNode.emit(node.device_id)
-                if node.monitoring_enabled and node.ip_address:
-                    self._worker.registerNode.emit(
-                        node.device_id, node.name, node.ip_address
-                    )
+            ):
+                self._worker.registerNode.emit(
+                    node.device_id, node.name, node.ip_address
+                )
 
     # ------------------------------------------------------------------
     # Connection operations (unchanged from Milestone 5)

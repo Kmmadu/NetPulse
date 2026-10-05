@@ -44,16 +44,9 @@ def main() -> int:
     # while the Qt event loop runs.
     app._netpulse_main_window = window
 
-    # Route SIGINT through the normal Qt quit path. Without this, Ctrl-C
-    # raises KeyboardInterrupt inside whichever slot is executing, which
-    # Qt does not handle gracefully and which leaves timers on the wrong
-    # thread (the "QObject::killTimer: Timers cannot be stopped from
-    # another thread" warnings on exit).
-    #
-    # The handler runs on the Python side of the interpreter, in whatever
-    # thread the signal is delivered to — normally the main thread, which
-    # is where Qt's event loop lives. Calling app.quit() from there is
-    # safe and queues a normal shutdown.
+    # Route SIGINT through the normal Qt quit path. app.quit() exits the
+    # event loop and (empirically) fires closeEvent on open windows, so
+    # MainWindow's own shutdown logic runs.
     signal.signal(signal.SIGINT, lambda *_: app.quit())
 
     # Qt does not wake its event loop for Python signal handlers on its

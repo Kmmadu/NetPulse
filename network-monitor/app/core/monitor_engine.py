@@ -196,7 +196,21 @@ class MonitoringEngine:
         
         if old_status != new_status:
             try:
-                alert_service = AlertServiceV2()
+                # Pass the engine's own db_path to the alert service. Without
+                # this, AlertServiceV2 falls back to its default of
+                # "data/monitor.db" (relative to cwd), which in the desktop
+                # app is a different file from the engine's own DB. The alert
+                # service then tries to ALTER TABLE on a DB that has no
+                # `devices` table, raises sqlite3.OperationalError, and no
+                # email is ever sent. Passing self.db_path makes the alert
+                # service use the same database the engine writes devices to.
+                #
+                # This is also correct for the CLI: it currently works by
+                # coincidence because the default path happens to equal the
+                # CLI's DB path. Making the coupling explicit is a no-op
+                # there and prevents the same class of bug in any future
+                # entry point that uses a non-default db_path.
+                alert_service = AlertServiceV2(db_path=self.db_path)
                 alert_service.process_status_change(device_id, old_status, new_status, is_reachable)
                 
                 # ============================================================

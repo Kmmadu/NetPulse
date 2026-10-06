@@ -4,15 +4,26 @@ Main application window.
 Milestone 6: owns the monitoring QThread and worker, wires the worker's
 cycleComplete signal to the canvas, and stops everything cleanly on close.
 
-Milestone 7.5: adds a Settings menu with SMTP Configuration, and prompts
-for SMTP configuration on first run if alerting is not configured.
+Milestone 7.5: adds SMTP configuration, prompted on first run if alerting
+is not configured.
+
+Milestone 7.9: adds canvas zoom controls and Ctrl+0 to reset to 100%.
+
+Milestone 7.95: the zoom controls move into a HeaderBar at the top of the
+window. The permanent right-side zoom panel is gone; the canvas occupies
+the full width of the central area. The zoom dropdown overlays the canvas
+when opened and closes on selection or click-outside. The menu bar is
+removed — Settings lives in the header.
 """
 
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QMessageBox
-from PySide6.QtGui import QAction
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QMessageBox,
+)
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtCore import QThread, Qt, QMetaObject, QTimer
 
 from ui.canvas import TopologyCanvas
+from ui.header_bar import HeaderBar
 from ui.config_dialog import ConfigDialog
 from ui import config_manager
 from monitoring_worker import (
@@ -31,25 +42,39 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("NetPulse — Network Topology")
         self.resize(1200, 800)
 
-        container = QWidget(self)
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
+        # ------------------------------------------------------------------
+        # Central layout: header bar (fixed height) + canvas (fills rest)
+        # ------------------------------------------------------------------
+        # The header replaces both the previous menu bar and the zoom
+        # sidebar. The canvas gets everything below the header, at full
+        # width. No sidebar reserves horizontal space.
+        self.canvas = TopologyCanvas(self)
+        self.header = HeaderBar(self)
 
-        self.canvas = TopologyCanvas(container)
-        layout.addWidget(self.canvas)
+        central = QWidget(self)
+        central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self.header)          # fixed height
+        central_layout.addWidget(self.canvas, 1)       # stretch: fills
+        self.setCentralWidget(central)
 
-        self.setCentralWidget(container)
+        # Header wiring. The zoom signals keep their old names, so only
+        # the receiving widget changed; the connections themselves are
+        # otherwise the same as the previous milestone.
+        self.header.settingsRequested.connect(self._open_config_dialog)
+        self.header.zoomRequested.connect(self.canvas.set_zoom)
+        self.header.fitRequested.connect(self.canvas.fit_to_window)
+        self.canvas.zoomChanged.connect(self.header.set_current_zoom)
 
         # ------------------------------------------------------------------
-        # Menu bar
+        # Shortcuts
         # ------------------------------------------------------------------
-        # Only one menu for now: Settings, with SMTP Configuration. Future
-        # milestones may add entries here (log retention, theme, etc.); the
-        # menu is a QMenuBar so adding them is a one-line change.
-        settings_menu = self.menuBar().addMenu("&Settings")
-        smtp_action = QAction("&SMTP Configuration…", self)
-        smtp_action.triggered.connect(self._open_config_dialog)
-        settings_menu.addAction(smtp_action)
+        # Ctrl+0 resets the canvas zoom to 100%. Application-level so it
+        # works regardless of which child widget has focus.
+        reset_zoom_shortcut = QShortcut(QKeySequence("Ctrl+0"), self)
+        reset_zoom_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        reset_zoom_shortcut.activated.connect(self.canvas.reset_zoom)
 
         # ------------------------------------------------------------------
         # Monitoring worker and thread

@@ -4,6 +4,7 @@ Connection edge between two DeviceNodes.
 An edge is a QGraphicsObject with:
   - a reference to each endpoint node,
   - a subscription to both nodes' positionChanged signals,
+  - a subscription to both nodes' statusChanged signals,
   - a geometry that is clipped to the gap between the two node rects
     (so it renders and is clickable only where there is visible space),
   - a z-value of -1 so any residual overlap with a node body is hidden.
@@ -12,6 +13,12 @@ Edges never move on their own; they only follow their endpoints. Dragging
 an edge is deliberately not supported.
 
 Milestone 4 does not persist edges. They exist only while the app is running.
+
+Milestone 7.99: the line colour now reflects the status of its endpoints.
+An edge touching a DOWN node is muted red; an edge touching a DEGRADED node
+is muted amber; an edge between healthy nodes is muted green; a selected
+edge is always bright blue, regardless of endpoint status. The geometry,
+hit shape, and lifecycle are unchanged from Milestone 4.
 """
 
 from __future__ import annotations
@@ -28,10 +35,24 @@ if TYPE_CHECKING:
 class ConnectionItem(QGraphicsObject):
     """A visual link between two device nodes."""
 
-    # Drawn line.
+    # Drawn line geometry. Independent of colour; a selected edge uses
+    # LINE_WIDTH + 1.0 as its stroke width.
     LINE_WIDTH = 2.0
-    LINE_COLOR = QColor("#5f6368")
-    LINE_COLOR_SELECTED = QColor("#1a73e8")
+
+    # Line colours. The choice among them is made by _line_color(); see
+    # that method for the priority rules.
+    #
+    # Default, when both endpoints are UP. Muted green, matching the
+    # "healthy" colour family of the node ring without being as
+    # saturated — the edge is supporting information, and the ring on
+    # the nodes is the primary status signal.
+    LINE_COLOR = QColor("#2E7D4A")           # muted green
+    # Selected, overriding any status tint.
+    LINE_COLOR_SELECTED = QColor("#6B9BFF")  # brighter blue
+    # One or both endpoints DOWN.
+    LINE_COLOR_DOWN = QColor("#8B3030")      # muted red
+    # One or both endpoints DEGRADED.
+    LINE_COLOR_DEGRADED = QColor("#8B6A20")  # muted amber
 
     # Hit area. Separate from the drawn width so the edge is clickable
     # without being visually heavy. Because the geometry is clipped to the
@@ -65,6 +86,13 @@ class ConnectionItem(QGraphicsObject):
         # Subscribe to both endpoints. On any node move, re-lay-out.
         self.from_node.positionChanged.connect(self._on_endpoint_moved)
         self.to_node.positionChanged.connect(self._on_endpoint_moved)
+
+        # Subscribe to status changes too, so the edge repaints when either
+        # endpoint transitions between UP / DEGRADED / DOWN / UNKNOWN. The
+        # colour decision itself happens in paint() by reading the nodes'
+        # current statuses; this subscription only forces the repaint.
+        self.from_node.statusChanged.connect(self._on_endpoint_status_changed)
+        self.to_node.statusChanged.connect(self._on_endpoint_status_changed)
 
         # Coalescing flag for the deferred geometry update. See
         # _on_endpoint_moved for why the update is deferred.
@@ -232,6 +260,38 @@ class ConnectionItem(QGraphicsObject):
         return stroker.createStroke(path)
 
     # ------------------------------------------------------------------
+    # Colour
+    # ------------------------------------------------------------------
+
+    def _line_color(self) -> QColor:
+        """
+        Choose the line colour based on selection state and the status of
+        the two endpoints.
+
+        Priority:
+          1. Selection — a selected edge is always the brighter blue,
+             regardless of endpoint status, so the user can always see
+             what they have selected.
+          2. DOWN — if either endpoint is DOWN, muted red.
+          3. DEGRADED — if either endpoint is DEGRADED, muted amber.
+          4. Default — muted green.
+
+        DOWN takes precedence over DEGRADED because a device that is
+        unreachable is a stronger signal than a device that is merely
+        slow. This mirrors DeviceNode._effective_ring_color()'s
+        precedence rules.
+        """
+        if self.isSelected():
+            return self.LINE_COLOR_SELECTED
+
+        statuses = {self.from_node.status, self.to_node.status}
+        if "DOWN" in statuses:
+            return self.LINE_COLOR_DOWN
+        if "DEGRADED" in statuses:
+            return self.LINE_COLOR_DEGRADED
+        return self.LINE_COLOR
+
+    # ------------------------------------------------------------------
     # Painting
     # ------------------------------------------------------------------
 
@@ -242,10 +302,11 @@ class ConnectionItem(QGraphicsObject):
 
         painter.setRenderHint(painter.RenderHint.Antialiasing, True)
 
+        colour = self._line_color()
         if self.isSelected():
-            pen = QPen(self.LINE_COLOR_SELECTED, self.LINE_WIDTH + 1.0)
+            pen = QPen(colour, self.LINE_WIDTH + 1.0)
         else:
-            pen = QPen(self.LINE_COLOR, self.LINE_WIDTH)
+            pen = QPen(colour, self.LINE_WIDTH)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
 
@@ -292,6 +353,23 @@ class ConnectionItem(QGraphicsObject):
         self.prepareGeometryChange()
         self.update()
 
+    def _on_endpoint_status_changed(self, _new_status: str) -> None:
+        """
+        Called when either endpoint's status changes. The only effect is
+        to schedule a repaint; the actual colour choice happens in
+        paint() by reading the endpoints' current statuses. Keeping the
+        decision in paint() means there is one source of truth for
+        "what colour is this edge" — the same principle as
+        DeviceNode._effective_ring_color().
+
+        Not coalesced through the QTimer used for geometry updates: a
+        status change is a single event that arrives at most once per
+        monitoring cycle, so the cost of an immediate update() is
+        negligible. The QTimer coalescing is for the many-per-second
+        position changes during a drag, not for status transitions.
+        """
+        self.update()
+
     def detach(self) -> None:
         """
         Disconnect from the endpoint signals. Called by the canvas before an
@@ -302,10 +380,21 @@ class ConnectionItem(QGraphicsObject):
         try:
             self.from_node.positionChanged.disconnect(self._on_endpoint_moved)
         except (RuntimeError, TypeError):
-            # Already disconnected, or the underlying C++ object was deleted.
             pass
         try:
             self.to_node.positionChanged.disconnect(self._on_endpoint_moved)
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            self.from_node.statusChanged.disconnect(
+                self._on_endpoint_status_changed
+            )
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            self.to_node.statusChanged.disconnect(
+                self._on_endpoint_status_changed
+            )
         except (RuntimeError, TypeError):
             pass
 

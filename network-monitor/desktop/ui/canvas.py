@@ -26,6 +26,21 @@ Milestone 7.96: canvas background changed from white to a dark graphite
 fifth grid line is drawn slightly brighter than the others, giving the
 technical-mesh feel called for in the redesign brief. No interaction
 logic changed.
+
+Milestone 7.102: adds a find bar, opened with Ctrl+F or the header's
+find button. Typing filters nodes by case-insensitive name substring;
+matches get a yellow border, the current match an orange one; navigation
+with Enter / Shift+Enter or the bar's ▲ ▼ buttons. The bar is a
+floating overlay parented to the viewport; while it is active the
+canvas's own key handlers (Delete, Esc) are suppressed so the user can
+type without deleting the selected node.
+
+Milestone 7.102 (revision): the find bar now follows the view. It
+subscribes to the two scrollbars' valueChanged signals and to
+zoomChanged, and repositions itself to the top-centre of the current
+viewport on every change. Without this, panning or zooming would move
+the scene under a stationary overlay and the bar would visually drift
+away from the top of what the user is looking at.
 """
 
 from PySide6.QtWidgets import (
@@ -43,6 +58,7 @@ from ui.device_node import DeviceNode
 from ui.connection_item import ConnectionItem
 from ui.device_types import DeviceType
 from ui.device_dialog import DeviceDialog
+from ui.find_bar import FindBar
 
 
 class TopologyCanvas(QGraphicsView):
@@ -118,6 +134,50 @@ class TopologyCanvas(QGraphicsView):
         # Middle-button pan state.
         self._pan_active = False
         self._pan_last_pos: QPoint | None = None
+
+        # ------------------------------------------------------------------
+        # Find bar
+        # ------------------------------------------------------------------
+        # The find bar is a floating overlay parented to the viewport,
+        # like the (now reverted) tool palette was. It is hidden by
+        # default; MainWindow calls show_find_bar() when the user presses
+        # Ctrl+F or clicks the find button in the header.
+        #
+        # State:
+        #   self._find_bar           — the widget
+        #   self._find_bar_active    — True while visible and focused;
+        #                              checked at the top of keyPressEvent
+        #                              so the canvas does not process its
+        #                              own key bindings (Delete, Esc, etc.)
+        #                              while the user is typing a search.
+        #   self._find_matches       — the current list of matched nodes,
+        #                              in scene order.
+        #   self._find_current_index — index into _find_matches for the
+        #                              currently-cycled match.
+        self._find_bar = FindBar(self.viewport())
+        self._find_bar.hide()
+        self._find_bar.queryChanged.connect(self._on_find_query_changed)
+        self._find_bar.nextRequested.connect(self._on_find_next)
+        self._find_bar.previousRequested.connect(self._on_find_previous)
+        self._find_bar.closedRequested.connect(self.hide_find_bar)
+
+        self._find_bar_active = False
+        self._find_matches: list = []
+        self._find_current_index: int = 0
+
+        # Reposition the find bar whenever the view's transform or scroll
+        # position changes. The bar is parented to the viewport, so it
+        # keeps its pixel position when the scene moves under it — which
+        # means it drifts visually away from the top of what the user is
+        # looking at. Subscribing to the scrollbars' valueChanged and to
+        # zoomChanged and calling the same _reposition_find_bar keeps the
+        # bar anchored to the top-centre of the *current* view.
+        #
+        # The guard inside _on_view_changed (bar is visible) keeps the
+        # cost zero when the find feature is not in use.
+        self.horizontalScrollBar().valueChanged.connect(self._on_view_changed)
+        self.verticalScrollBar().valueChanged.connect(self._on_view_changed)
+        self.zoomChanged.connect(self._on_view_changed)
 
     # ------------------------------------------------------------------
     # Worker attachment
@@ -466,6 +526,200 @@ class TopologyCanvas(QGraphicsView):
         return self._scene
 
     # ------------------------------------------------------------------
+    # Find
+    # ------------------------------------------------------------------
+
+    def show_find_bar(self) -> None:
+        """
+        Show the find bar and give it focus. Called by MainWindow when
+        the user presses Ctrl+F or clicks the find button in the header.
+        Idempotent.
+        """
+        self._find_bar.show()
+        self._find_bar.raise_()
+        self._find_bar.focus_input()
+        self._find_bar_active = True
+        self._reposition_find_bar()
+        # Re-run the query against the current text so re-opening the
+        # bar with a stale query re-highlights the matches. If the
+        # input was cleared by hide_find_bar, this is a no-op.
+        self._on_find_query_changed(self._find_bar.query())
+
+    def hide_find_bar(self) -> None:
+        """
+        Hide the find bar, clear its query, and clear all highlights.
+        Called by MainWindow when Esc is pressed outside the bar, or by
+        the bar itself when the user clicks its close button or presses
+        Esc inside it.
+        """
+        self._find_bar.hide()
+        self._find_bar.clear()
+        self._find_bar_active = False
+        self._clear_find_matches()
+
+    def _on_find_query_changed(self, text: str) -> None:
+        """
+        Recompute the match set in response to a keystroke in the find
+        input. Updates the highlight on every node and refreshes the
+        counter in the bar.
+        """
+        self._find_matches = self.find_nodes(text)
+        self._find_current_index = 0
+        self._apply_find_highlight()
+
+        if self._find_matches:
+            self._centre_on_find_match()
+            self._find_bar.set_match_info(1, len(self._find_matches))
+        else:
+            self._find_bar.set_match_info(0, 0)
+
+    def _on_find_next(self) -> None:
+        """Cycle to the next match, wrapping around."""
+        if not self._find_matches:
+            return
+        self._find_current_index = (
+            self._find_current_index + 1
+        ) % len(self._find_matches)
+        self._apply_find_highlight()
+        self._centre_on_find_match()
+        self._find_bar.set_match_info(
+            self._find_current_index + 1, len(self._find_matches)
+        )
+
+    def _on_find_previous(self) -> None:
+        """Cycle to the previous match, wrapping around."""
+        if not self._find_matches:
+            return
+        self._find_current_index = (
+            self._find_current_index - 1
+        ) % len(self._find_matches)
+        self._apply_find_highlight()
+        self._centre_on_find_match()
+        self._find_bar.set_match_info(
+            self._find_current_index + 1, len(self._find_matches)
+        )
+
+    def _apply_find_highlight(self) -> None:
+        """
+        Push the current find state onto every node: matched nodes get
+        a highlight; unmatched nodes have any prior highlight cleared;
+        the current match gets the "current" treatment.
+        """
+        match_set = set(self._find_matches)
+        current_node = (
+            self._find_matches[self._find_current_index]
+            if self._find_matches else None
+        )
+
+        for item in self._scene.items():
+            if not isinstance(item, DeviceNode):
+                continue
+            if item in match_set:
+                item.set_find_highlight(current=(item is current_node))
+            else:
+                item.clear_find_highlight()
+
+    def _clear_find_matches(self) -> None:
+        """Remove any find highlight from every node. Called when the
+        find bar closes."""
+        for item in self._scene.items():
+            if isinstance(item, DeviceNode):
+                item.clear_find_highlight()
+        self._find_matches = []
+        self._find_current_index = 0
+
+    def _centre_on_find_match(self) -> None:
+        """
+        Pan the view so the current match is visible. Per design decision
+        D4, we only pan when the node is not already fully inside the
+        current viewport — a match that is already visible is left where
+        the user can see it.
+        """
+        if not self._find_matches:
+            return
+        node = self._find_matches[self._find_current_index]
+        node_rect = node.rect_in_scene()
+        visible = self.mapToScene(self.viewport().rect()).boundingRect()
+        if visible.contains(node_rect):
+            return
+        self.centerOn(node_rect.center())
+
+    def _on_view_changed(self, *_args) -> None:
+        """
+        Called when the view's zoom or scroll changes. Repositions the
+        find bar if it is visible, so it stays anchored to the top-centre
+        of the viewport.
+
+        Accepts a variable number of positional arguments because it is
+        connected to two different signals: scrollbar.valueChanged(int)
+        and zoomChanged(float). The arguments are ignored; the reposition
+        reads the current viewport size and computes the position from
+        scratch.
+
+        Guarded on the bar being visible so the cost is zero when the
+        find feature is not in use. This fires on every scroll step
+        during a pan, so keeping the guard is what makes the subscription
+        cheap.
+        """
+        if self._find_bar.isVisible():
+            self._reposition_find_bar()
+
+    def _reposition_find_bar(self) -> None:
+        """
+        Position the find bar centred horizontally, 12 px below the top
+        of the viewport. Called on show, on viewport resize, and on every
+        view change (scroll or zoom) via _on_view_changed.
+
+        The horizontal centring and top offset are recomputed from the
+        current viewport size every time, so there is no state to keep in
+        sync between callers.
+        """
+        viewport = self.viewport()
+        self._find_bar.adjustSize()
+
+        x = (viewport.width() - self._find_bar.width()) // 2
+
+        # Keep the bar near the top; clamp to the viewport if the window
+        # is unusually short, so the bar does not get pushed off the
+        # visible area.
+        y = 12
+        max_y = viewport.height() - self._find_bar.height() - 4
+        if max_y >= 0 and y > max_y:
+            y = max_y
+
+        self._find_bar.move(x, y)
+
+    def resizeEvent(self, event) -> None:
+        """
+        Reposition the find bar when the viewport is resized. Called by
+        Qt on every viewport resize; keeps the bar's horizontal
+        centring correct as the window changes size.
+        """
+        super().resizeEvent(event)
+        if self._find_bar is not None:
+            self._reposition_find_bar()
+
+    def find_nodes(self, query: str) -> list:
+        """
+        Return the nodes whose name contains `query` as a substring,
+        case-insensitively. An empty or whitespace-only query returns
+        an empty list, so a fresh find bar does not highlight every
+        node on the canvas.
+
+        Order is stable: nodes are returned in the order they appear
+        in the scene's item list, which for practical purposes is the
+        order they were added. When the user cycles through matches,
+        they move through that order.
+        """
+        q = query.strip().lower()
+        if not q:
+            return []
+        return [
+            item for item in self._scene.items()
+            if isinstance(item, DeviceNode) and q in item.name.lower()
+        ]
+
+    # ------------------------------------------------------------------
     # Node operations
     # ------------------------------------------------------------------
 
@@ -731,6 +985,14 @@ class TopologyCanvas(QGraphicsView):
     # ------------------------------------------------------------------
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
+        if self._find_bar_active:
+            # The find bar has keyboard focus; let the focused widget
+            # handle the key. QGraphicsView's default handling would
+            # otherwise process Delete and remove the selected node
+            # while the user types.
+            super().keyPressEvent(event)
+            return
+
         if event.key() == Qt.Key.Key_Escape and self._connect_source is not None:
             self._cancel_connect()
             event.accept()

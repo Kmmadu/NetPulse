@@ -14,6 +14,16 @@ window. The permanent right-side zoom panel is gone; the canvas occupies
 the full width of the central area. The zoom dropdown overlays the canvas
 when opened and closes on selection or click-outside. The menu bar is
 removed — Settings lives in the header.
+
+Milestone 7.99 (cleanup): the terminate() fallback in closeEvent now uses
+a doubled wait timeout with a 30-second floor, so the fallback is reached
+only when the environment is genuinely pathological. If it is reached,
+the failure is logged loudly to stderr and reported to the user via a
+modal dialog before terminate() runs, rather than being a silent print.
+
+Milestone 7.102: adds the find feature's entry points. The header's find
+button (header.findRequested) opens the canvas's find bar via
+show_find_bar, and Ctrl+F does the same from anywhere in the window.
 """
 
 from PySide6.QtWidgets import (
@@ -67,6 +77,12 @@ class MainWindow(QMainWindow):
         self.header.fitRequested.connect(self.canvas.fit_to_window)
         self.canvas.zoomChanged.connect(self.header.set_current_zoom)
 
+        # Find feature: the header's find button opens the canvas's
+        # floating find bar. The bar itself (positioning, focus, match
+        # highlighting) is owned by the canvas; MainWindow only wires
+        # the button's signal to the canvas's public method.
+        self.header.findRequested.connect(self.canvas.show_find_bar)
+
         # ------------------------------------------------------------------
         # Shortcuts
         # ------------------------------------------------------------------
@@ -75,6 +91,12 @@ class MainWindow(QMainWindow):
         reset_zoom_shortcut = QShortcut(QKeySequence("Ctrl+0"), self)
         reset_zoom_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         reset_zoom_shortcut.activated.connect(self.canvas.reset_zoom)
+
+        # Ctrl+F opens the find bar. Application-level so it works from
+        # anywhere in the window, including when the canvas has focus.
+        find_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        find_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        find_shortcut.activated.connect(self.canvas.show_find_bar)
 
         # ------------------------------------------------------------------
         # Monitoring worker and thread
@@ -227,10 +249,10 @@ class MainWindow(QMainWindow):
              "QObject::killTimer: Timers cannot be stopped from another
              thread" warnings.
           2. Quit the thread's event loop.
-          3. Wait for the thread to exit, using a timeout derived from
-             the ping parameters. If that wait fails, fall back to
-             terminate(), which is documented as unsafe but is still
-             preferable to a hung application.
+          3. Wait for the thread to exit, using a generously derived
+             timeout. If the wait fails, fall back to terminate(), which
+             is documented as unsafe but is still preferable to a hung
+             application.
 
         Why BlockingQueuedConnection and not a signal emit: emitting a
         queued signal returns immediately and the queued slot invocation
@@ -243,10 +265,16 @@ class MainWindow(QMainWindow):
         BlockingQueuedConnection removes the race: the caller waits until
         the slot has finished executing on the worker thread.
 
-        BlockingQueuedConnection must not be used between objects on the
-        same thread (it deadlocks). Here the caller is the GUI thread and
-        the callee lives on the worker thread, so it is the correct
-        mechanism.
+        On the terminate() fallback: QThread.terminate() is documented as
+        unsafe and can, if called while the target thread is executing
+        Python bytecode or a C extension, corrupt the interpreter state
+        and produce a SIGSEGV on exit. The wait timeout above is derived
+        from the ping parameters and then doubled with a 30-second floor,
+        which makes reaching this fallback in practice a sign that
+        something is genuinely wrong — likely a kernel-level network
+        freeze or a subprocess that will never return. If it is reached,
+        it is logged loudly to stderr and reported to the user via a
+        modal dialog so the failure is not silent.
         """
         QMetaObject.invokeMethod(
             self._worker,
@@ -255,11 +283,41 @@ class MainWindow(QMainWindow):
         )
 
         self._worker_thread.quit()
-        wait_ms = self._shutdown_wait_ms()
+
+        # The derived timeout is generous on its own; doubling it and
+        # imposing a 30-second floor makes the fallback reachable only
+        # when the environment is genuinely pathological. This is
+        # deliberate: the alternative — a tighter timeout that fires
+        # sometimes — would put the unsafe terminate() path on the
+        # routine path, which is exactly what the shutdown redesign was
+        # meant to eliminate.
+        wait_ms = max(30_000, self._shutdown_wait_ms() * 2)
+
         if not self._worker_thread.wait(wait_ms):
+            # Reaching this branch means the worker thread did not exit
+            # within the (very generous) timeout. Log loudly and warn the
+            # user before doing anything drastic, so the failure is
+            # visible rather than silent.
+            import sys
             print(
-                f"[main_window] worker thread did not exit in "
-                f"{wait_ms}ms; terminating (this should not happen)"
+                f"[SHUTDOWN-FAILURE] worker thread did not exit in "
+                f"{wait_ms}ms; forcing termination. This indicates the "
+                f"derived timeout was wrong for this environment. "
+                f"Please report this.",
+                file=sys.stderr,
+                flush=True,
+            )
+            QMessageBox.warning(
+                self,
+                "Shutdown problem",
+                "The monitoring worker thread did not stop cleanly within "
+                f"{wait_ms // 1000} seconds and was forcibly terminated.\n\n"
+                "The application will now exit, but this indicates a "
+                "problem with the environment that may cause unreliable "
+                "shutdown behaviour.\n\n"
+                "If you can, please note what was happening at the time "
+                "(very slow network? a device that never responds?) and "
+                "report it.",
             )
             self._worker_thread.terminate()
             self._worker_thread.wait(1000)

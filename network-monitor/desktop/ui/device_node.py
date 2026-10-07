@@ -13,6 +13,23 @@ suboptimality severity (none / mild / moderate / severe / critical). A
 device that is technically reachable but whose link quality is degraded
 shows an amber or red ring-and-icon, not green. The severity is reflected
 in the ring itself; the tooltip shows the reason.
+
+Milestone 7.98: node cards are now dark slate instead of pale grey, and
+the name is drawn in bold near-white (contrast ratio ~14:1 against the
+card). The IP is not shown on the card — it remains available in the
+tooltip. The ring, icon, status palette, and composite-severity logic
+are unchanged.
+
+Milestone 7.99: adds a statusChanged signal, emitted from set_status().
+ConnectionItem subscribes to this so that edges can repaint when their
+endpoints transition between UP / DEGRADED / DOWN / UNKNOWN. The signal
+is additive — nothing else in the class changes.
+
+Milestone 7.102: adds find-highlight state. Two new methods,
+set_find_highlight(current: bool) and clear_find_highlight(), and one
+additional branch in paint() that selects the border colour when the
+node is a search match. Selection overrides highlight — a selected
+node always shows the selection border, regardless of find state.
 """
 
 import uuid
@@ -37,6 +54,13 @@ class DeviceNode(QGraphicsObject):
     # drags. Emitted from itemChange().
     positionChanged = Signal(QPointF)
 
+    # Emitted whenever the node's status changes (UP / DEGRADED / DOWN /
+    # UNKNOWN). ConnectionItem subscribes to this so that edges can
+    # reflect the status of their endpoints — specifically, an edge
+    # touching a DOWN or DEGRADED node is visually muted. Emitted from
+    # set_status(); see that method.
+    statusChanged = Signal(str)
+
     # Emitted when the user double-clicks the node. The canvas connects to
     # this and opens the edit dialog. Emitting rather than opening the
     # dialog directly keeps DeviceNode free of any knowledge of dialogs.
@@ -50,10 +74,12 @@ class DeviceNode(QGraphicsObject):
     # Visual constants
     # ------------------------------------------------------------------
 
-    # Neutral fill, same for every device type. The fill deliberately does
-    # not carry any meaning; status and quality are conveyed by the ring
-    # and the icon.
-    FILL_COLOR = QColor("#f4f5f7")
+    # Card fill. Dark slate, sitting between the canvas background
+    # (#0F1117) and the node's border. The value is deliberately the same
+    # as the grid base colour (#1A1D24) so a node reads as "raised from
+    # the grid" rather than as a distinct material. The fill carries no
+    # status meaning; status is conveyed by the ring and the icon.
+    FILL_COLOR = QColor(26, 29, 36)           # #1A1D24, dark slate
 
     # Border. Selection is shown by weight and colour of the border, not by
     # any change to fill, ring, or icon, so it cannot be confused with
@@ -63,8 +89,20 @@ class DeviceNode(QGraphicsObject):
     BORDER_WIDTH = 1.5
     BORDER_WIDTH_SELECTED = 2.5
 
-    # Name text.
-    TEXT_COLOR = QColor("#202124")
+    # Find-highlight border colours. The "match" border is a soft
+    # yellow; the "current" border is a brighter amber so the current
+    # match is distinguishable from its peers at a glance. Both are
+    # distinct from the selection border (dark blue) so a node can be
+    # both selected and highlighted without ambiguity — selection wins
+    # in that case, since the user's explicit interaction should take
+    # precedence over a passive search result.
+    FIND_MATCH_COLOR = QColor("#F5C542")
+    FIND_CURRENT_COLOR = QColor("#FF8B3D")
+    FIND_BORDER_WIDTH = 2.5
+
+    # Text colour. Chosen for contrast against FILL_COLOR:
+    #   NAME_COLOR #E8EAED has a contrast ratio of ~14:1 (WCAG AAA).
+    NAME_COLOR = QColor("#E8EAED")
 
     # Colours used by the effective-ring computation. The status colours
     # (green / amber / red / grey) are the same ones used since Milestone 6.
@@ -121,6 +159,13 @@ class DeviceNode(QGraphicsObject):
         self._suboptimal_severity: str = "none"
         self._suboptimal_reasons: list[str] = []
 
+        # Find-highlight state. None = no highlight; "match" = this node
+        # is one of the search matches; "current" = this node is the
+        # currently-cycled match. Set by the canvas via
+        # set_find_highlight / clear_find_highlight. Not part of the
+        # node's persistent state; cleared when the find bar closes.
+        self._find_highlight: str | None = None
+
         self._rect = QRectF(0, 0, self.WIDTH, self.HEIGHT)
 
         self.setFlags(
@@ -149,10 +194,18 @@ class DeviceNode(QGraphicsObject):
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(painter.RenderHint.Antialiasing, True)
 
-        # 1. Node body: neutral fill, uniform rounded rect.
+        # 1. Node body: dark slate fill, uniform rounded rect.
         painter.setBrush(QBrush(self.FILL_COLOR))
         if self.isSelected():
+            # Selection wins over find-highlight. A user who has
+            # selected a node should see the selection styling
+            # regardless of whether the node also happens to be a
+            # search match.
             border = QPen(self.BORDER_COLOR_SELECTED, self.BORDER_WIDTH_SELECTED)
+        elif self._find_highlight == "current":
+            border = QPen(self.FIND_CURRENT_COLOR, self.FIND_BORDER_WIDTH)
+        elif self._find_highlight == "match":
+            border = QPen(self.FIND_MATCH_COLOR, self.FIND_BORDER_WIDTH)
         else:
             border = QPen(self.BORDER_COLOR, self.BORDER_WIDTH)
         if not self.monitoring_enabled:
@@ -195,11 +248,15 @@ class DeviceNode(QGraphicsObject):
         icon_y = int(ring_cy - self.ICON_SIZE / 2)
         painter.drawPixmap(icon_x, icon_y, pm)
 
-        # 4. Name, centred horizontally, in the lower portion of the node.
+        # 4. Name, bold, centred horizontally, in the lower portion of
+        #    the node. The IP is deliberately not shown on the card; it is
+        #    available in the tooltip. Keeping the card to a single line
+        #    of text keeps the visual weight low and the name prominent.
         name_font = QFont()
         name_font.setPointSize(10)
+        name_font.setBold(True)
         painter.setFont(name_font)
-        painter.setPen(QPen(self.TEXT_COLOR))
+        painter.setPen(QPen(self.NAME_COLOR))
 
         name_rect = QRectF(
             4,
@@ -296,12 +353,20 @@ class DeviceNode(QGraphicsObject):
         cycleComplete slot. Idempotent: no-op if the status is unchanged,
         so repeated cycles reporting the same status do not thrash the
         pixmap cache.
+
+        Emits statusChanged after the attribute is updated, so subscribers
+        see the new value when they react. ConnectionItem subscribes to
+        this so that edges can repaint when their endpoints' statuses
+        change — without it, an edge touching a node that just went DOWN
+        would keep its pre-transition appearance until something else
+        triggered a repaint.
         """
         if status == self.status:
             return
         self.status = status
         self._invalidate_cache()
         self._update_tooltip()
+        self.statusChanged.emit(status)
 
     def set_latency(self, latency_ms) -> None:
         """
@@ -347,6 +412,31 @@ class DeviceNode(QGraphicsObject):
         self._invalidate_cache()
         self._update_tooltip()
 
+    def set_find_highlight(self, current: bool) -> None:
+        """
+        Set the find-highlight state. `current=True` marks this node as
+        the currently-cycled match; `current=False` marks it as another
+        match in the set. Both states are visually distinct from normal
+        selection; the current match is more prominent.
+
+        Called by the canvas's _apply_find_highlight(). Idempotent.
+        """
+        new_state = "current" if current else "match"
+        if self._find_highlight == new_state:
+            return
+        self._find_highlight = new_state
+        self._invalidate_cache()
+
+    def clear_find_highlight(self) -> None:
+        """
+        Clear any find-highlight state. Called when the search is cleared
+        or the find bar closes. Idempotent.
+        """
+        if self._find_highlight is None:
+            return
+        self._find_highlight = None
+        self._invalidate_cache()
+
     def _invalidate_cache(self) -> None:
         """Force a re-render of the cached pixmap. Any method that changes a
         visual attribute must call this; DeviceCoordinateCache otherwise
@@ -372,9 +462,6 @@ class DeviceNode(QGraphicsObject):
         )
         monitoring = "on" if self.monitoring_enabled else "off"
 
-        # Quality line: only meaningful when the device is reachable. When
-        # the device is DOWN or UNKNOWN, the status itself dominates and a
-        # quality comment would be confusing.
         if self.status in ("DOWN", "UNKNOWN"):
             quality_line = None
         elif self._suboptimal_severity == "none":

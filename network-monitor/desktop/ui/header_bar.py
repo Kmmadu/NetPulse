@@ -7,6 +7,7 @@ Contents, left to right:
                    in the accent blue (#6B9BFF).
     "Topology"   — a muted section label (#9AA0A6), the current view name.
     (stretch)    — pushes the rest to the right.
+    "File"       — opens a dropdown with Save As (New and Open to follow).
     [find]       — a small magnifier button opening the find bar.
     "Settings"   — opens the SMTP configuration dialog.
     "Zoom 100 %" — opens a dropdown of zoom presets and the Fit action.
@@ -17,11 +18,12 @@ space below. The zoom dropdown IS an overlay: it appears over the canvas
 when the Zoom button is clicked, and closes on selection or click-outside.
 
 Signals:
-    settingsRequested()   — user clicked Settings.
-    zoomRequested(float)  — user picked a numeric preset from the dropdown.
-    fitRequested()        — user picked the "Fit" action from the dropdown.
-    findRequested()       — user clicked the find button (or pressed Ctrl+F,
-                            which is wired in MainWindow to the same slot).
+    settingsRequested()      — user clicked Settings.
+    zoomRequested(float)     — user picked a numeric preset from the dropdown.
+    fitRequested()           — user picked the "Fit" action from the dropdown.
+    findRequested()          — user clicked the find button (or pressed Ctrl+F,
+                               which is wired in MainWindow to the same slot).
+    fileSaveAsRequested()    — user picked "Save As…" from the File menu.
 
 The Zoom button's label is updated by `set_current_zoom`, which
 MainWindow wires to the canvas's `zoomChanged` signal.
@@ -30,7 +32,7 @@ MainWindow wires to the canvas's `zoomChanged` signal.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal, QSize
-from PySide6.QtGui import QAction, QColor, QIcon
+from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -52,6 +54,7 @@ class HeaderBar(QFrame):
     zoomRequested = Signal(float)
     fitRequested = Signal()
     findRequested = Signal()
+    fileSaveAsRequested = Signal()
 
     HEADER_HEIGHT = 40
 
@@ -146,6 +149,21 @@ class HeaderBar(QFrame):
             " padding: 0; margin: 0;"
         )
 
+        # --- File button ----------------------------------------------
+        # Opens the File dropdown: Save As for now, with New and Open
+        # to follow. The button emits a signal; MainWindow owns the
+        # handler. Keeping the menu-contents decision in MainWindow
+        # means the header does not need to know about file paths, the
+        # session, or the worker.
+        self._file_button = QPushButton("File")
+        self._file_button.setFlat(True)
+        self._file_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._file_button.setStyleSheet(self._flat_button_stylesheet())
+        self._file_button.clicked.connect(self._open_file_menu)
+
+        # The File dropdown, created lazily on first open.
+        self._file_menu: QMenu | None = None
+
         # --- Find button ----------------------------------------------
         # Opens the find bar. The button emits a signal; MainWindow
         # handles opening the bar. This keeps the header free of any
@@ -187,7 +205,7 @@ class HeaderBar(QFrame):
 
         # --- Layout ---------------------------------------------------
         # Left block:  [logo]  [NetPulse]  [Topology]  --- stretch ---
-        # Right block:                     [find]  [Settings]  [Zoom ▼]
+        # Right block:                     [File]  [find]  [Settings]  [Zoom ▼]
         #
         # Spacing chosen so the logo and wordmark are visually one unit
         # (small gap), while the section label sits apart (larger gap),
@@ -205,6 +223,7 @@ class HeaderBar(QFrame):
 
         layout.addStretch(1)
 
+        layout.addWidget(self._file_button)
         layout.addWidget(self._find_button)
         layout.addWidget(self._settings_button)
         layout.addWidget(self._zoom_button)
@@ -226,6 +245,35 @@ class HeaderBar(QFrame):
         """
         pct = int(round(scale * 100))
         self._zoom_button.setText(f"Zoom {pct} %")
+
+    # ------------------------------------------------------------------
+    # Internal — file menu
+    # ------------------------------------------------------------------
+
+    def _open_file_menu(self) -> None:
+        """
+        Build (if needed) and pop up the File menu below the File button.
+
+        Currently only Save As. New and Open will be added in a later
+        drop, once the worker-restart machinery they need is in place.
+        Greyed-out placeholder entries would be more honest than
+        omitting them, but they cannot be clicked and add confusion,
+        so they are omitted until they work.
+        """
+        if self._file_menu is None:
+            self._file_menu = QMenu(self)
+
+            save_as_action = QAction("Save As…", self._file_menu)
+            save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
+            save_as_action.triggered.connect(
+                self.fileSaveAsRequested.emit
+            )
+            self._file_menu.addAction(save_as_action)
+
+        bottom_left = self._file_button.mapToGlobal(
+            self._file_button.rect().bottomLeft()
+        )
+        self._file_menu.popup(bottom_left)
 
     # ------------------------------------------------------------------
     # Internal — zoom menu

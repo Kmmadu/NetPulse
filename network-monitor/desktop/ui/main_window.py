@@ -58,14 +58,23 @@ hardcoded. MainWindow calls session.load_last_path() at construction,
 which returns the file the user last had open, or a default if there is
 no session or the stored path no longer exists. That path is passed to
 MonitoringWorker, which passes it to MonitoringEngine, which opens a
-Database pointed at it. File -> Open and File -> Save As (in a later
-drop) update the session via session.save_last_path().
+Database pointed at it.
+
+Milestone 9 (Drop 2a): File -> Save As. Copies the current topology
+file to a user-chosen path, updates the session to point at the copy,
+and updates the window title. The running worker continues on the
+original file for the remainder of the session; the copy is what the
+next launch will open. This is the smaller half of the File menu
+feature — the full "Save As restarts the app in the new file" and the
+File -> Open / File -> New items land in Drop 2b.
 """
 
 import sys
+import shutil
+from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QMessageBox,
+    QMainWindow, QWidget, QVBoxLayout, QMessageBox, QFileDialog,
 )
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtCore import QThread, Qt, QMetaObject, QTimer
@@ -137,6 +146,11 @@ class MainWindow(QMainWindow):
         # the button's signal to the canvas's public method.
         self.header.findRequested.connect(self.canvas.show_find_bar)
 
+        # File menu (M9 Drop 2a): Save As. The header emits a signal;
+        # the handler lives here because it needs to know about the
+        # session and the file system.
+        self.header.fileSaveAsRequested.connect(self._file_save_as)
+
         # ------------------------------------------------------------------
         # Shortcuts
         # ------------------------------------------------------------------
@@ -166,6 +180,13 @@ class MainWindow(QMainWindow):
         fit_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         fit_shortcut.activated.connect(self.canvas.fit_to_window)
 
+        # Ctrl+Shift+S = Save As. Application-level so the shortcut
+        # works from anywhere in the window, matching the convention
+        # used by most editors. The File menu entry does the same thing.
+        save_as_shortcut = QShortcut(QKeySequence("Ctrl+Shift+S"), self)
+        save_as_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        save_as_shortcut.activated.connect(self._file_save_as)
+
         # ------------------------------------------------------------------
         # Monitoring worker and thread
         # ------------------------------------------------------------------
@@ -184,6 +205,11 @@ class MainWindow(QMainWindow):
         self._topology_path: str = session.load_last_path()
         self._worker = MonitoringWorker(db_path=self._topology_path)
         self._worker.moveToThread(self._worker_thread)
+
+        # Show the current file name in the title bar. Done before the
+        # event loop starts so the title is correct the moment the
+        # window appears.
+        self._update_window_title()
 
         # Lifecycle wiring.
         #   thread.started       -> worker.on_thread_started
@@ -278,6 +304,130 @@ class MainWindow(QMainWindow):
 
         self.canvas.set_database(db)
         self.canvas.load_topology()
+
+    # ------------------------------------------------------------------
+    # Window title
+    # ------------------------------------------------------------------
+
+    def _update_window_title(self) -> None:
+        """
+        Set the window title to show the current topology file name.
+
+        Format: "NetPulse — Network Topology — <filename>"
+
+        If no topology path is set (should not happen in normal use — the
+        session always resolves to a path), falls back to the plain title.
+        """
+        path = getattr(self, "_topology_path", None)
+        if path:
+            name = Path(path).name
+            self.setWindowTitle(
+                f"NetPulse — Network Topology — {name}"
+            )
+        else:
+            self.setWindowTitle("NetPulse — Network Topology")
+
+    # ------------------------------------------------------------------
+    # File operations
+    # ------------------------------------------------------------------
+
+    def _file_save_as(self) -> None:
+        """
+        Copy the current topology file to a user-chosen path, and switch
+        the session to point at the new file.
+
+        What this does NOT do:
+          - It does not restart the worker. The running engine keeps
+            writing to the original _topology_path (the source of the
+            copy). Save As is a snapshot; the copy is what next launch
+            will open, but this session continues in the original.
+            To make the copy live immediately, the worker would need to
+            be stopped and rebuilt, which is the New/Open drop's job.
+          - It does not touch the canvas. The scene is unchanged; only
+            the file on disk and the session pointer move.
+
+        Order:
+          1. Flush pending position saves, so the source file is up to
+             date before we copy it.
+          2. Ask the user for a target path.
+          3. If the target is the current file, no-op (the user picked
+             the same name; nothing to do).
+          4. Copy the file.
+          5. Update the session.
+          6. Update the window title.
+          7. Status bar feedback.
+
+        A future drop will extend this so that after Save As the running
+        worker switches to the new file. For now, the copy is dormant
+        until the next launch.
+
+        Failures (permission denied, disk full, source file missing) are
+        reported in a QMessageBox and do not change state.
+        """
+        # 1. Flush the source before copying.
+        self.canvas.flush_pending_saves()
+
+        source = self._topology_path
+        if not Path(source).exists():
+            QMessageBox.warning(
+                self,
+                "Save As failed",
+                f"The current topology file does not exist:\n\n{source}",
+            )
+            return
+
+        # 2. File dialog.
+        start_dir = session.load_last_save_dir()
+        suggested = str(Path(start_dir) / "topology.npdb")
+        chosen, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save topology as",
+            suggested,
+            "NetPulse topology (*.npdb);;SQLite database (*.db);;All files (*)",
+        )
+        if not chosen:
+            return  # user cancelled
+
+        target = str(Path(chosen))
+
+        # 3. No-op if same file.
+        try:
+            same = Path(target).resolve() == Path(source).resolve()
+        except OSError:
+            same = False
+        if same:
+            self.statusBar().showMessage(
+                "Save As: the chosen path is already the current file.",
+                4000,
+            )
+            return
+
+        # 4. Copy.
+        try:
+            shutil.copy2(source, target)
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "Save As failed",
+                f"Could not write to:\n\n{target}\n\n{exc}",
+            )
+            return
+
+        # 5. Session.
+        session.save_last_path(target)
+        session.save_last_save_dir(str(Path(target).parent))
+        self._topology_path = target
+
+        # 6. Title.
+        self._update_window_title()
+
+        # 7. Feedback.
+        self.statusBar().showMessage(
+            f"Topology saved as {Path(target).name}. "
+            f"This session continues using the previous file; "
+            f"next launch will open the new one.",
+            8000,
+        )
 
     # ------------------------------------------------------------------
     # SMTP configuration

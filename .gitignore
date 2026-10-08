@@ -62,3 +62,7 @@ Thumbs.db
 *.db-shm
 *.db-wal
 alert_state_*.json
+network-monitor/desktop/data/alert_state.json
+network-monitor/desktop/data/*.db
+network-monitor/desktop/data/*.db-wal
+network-monitor/desktop/data/*.db-shm

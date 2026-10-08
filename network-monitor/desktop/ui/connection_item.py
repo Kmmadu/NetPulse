@@ -19,6 +19,23 @@ An edge touching a DOWN node is muted red; an edge touching a DEGRADED node
 is muted amber; an edge between healthy nodes is muted green; a selected
 edge is always bright blue, regardless of endpoint status. The geometry,
 hit shape, and lifecycle are unchanged from Milestone 4.
+
+Milestone 7.104 (fix): edges are no longer mouse-interactive. The
+ItemIsSelectable flag was removed and setAcceptedMouseButtons(NoButton)
+was added. With ItemIsSelectable set, a left-press anywhere inside the
+edge's hit-stroke was routed to the edge rather than to the node behind
+it; the view then held the mouse grab on the edge, and any node whose
+body overlapped the edge's stroke (i.e. any two nodes close enough to
+be worth connecting) became undraggable. Edges are still right-clickable
+via the canvas context menu, which is the only interaction they need.
+
+Milestone 7.104 (fix): _clipped_line() now only refuses to draw when
+the two centres are essentially coincident. The previous threshold was
+half the node diagonal (~67 px for a 120x60 node), which suppressed the
+edge entirely for two cards placed 60 px apart — a normal arrangement
+when connecting nearby devices, and the reason "no visual indication"
+was reported after connecting. The fallback to the raw line when the
+clip fails also prevents silent suppression when the two rects overlap.
 """
 
 from __future__ import annotations
@@ -47,17 +64,18 @@ class ConnectionItem(QGraphicsObject):
     # saturated — the edge is supporting information, and the ring on
     # the nodes is the primary status signal.
     LINE_COLOR = QColor("#2E7D4A")           # muted green
-    # Selected, overriding any status tint.
+    # Selected, overriding any status tint. (Retained for a future
+    # gesture that selects an edge explicitly; not reachable from a
+    # left-click today, because edges are not mouse-interactive.)
     LINE_COLOR_SELECTED = QColor("#6B9BFF")  # brighter blue
     # One or both endpoints DOWN.
     LINE_COLOR_DOWN = QColor("#8B3030")      # muted red
     # One or both endpoints DEGRADED.
     LINE_COLOR_DEGRADED = QColor("#8B6A20")  # muted amber
 
-    # Hit area. Separate from the drawn width so the edge is clickable
-    # without being visually heavy. Because the geometry is clipped to the
-    # gap between nodes, this width cannot accidentally swallow clicks on a
-    # node body.
+    # Hit area. Kept as a constant because shape() still uses it — even
+    # though edges accept no mouse buttons now, a future "select the
+    # edge by clicking within 4 px of it" gesture would reuse this.
     HIT_WIDTH = 8.0
 
     # Drawn behind nodes (nodes are at z=0). With clipping this is belt-and-
@@ -74,13 +92,28 @@ class ConnectionItem(QGraphicsObject):
         self.from_node = from_node
         self.to_node = to_node
 
-        self.setFlags(
-            QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
-            # Deliberately NOT ItemIsMovable. Edges are laid out from their
-            # endpoints' positions; allowing the user to drag one would be
-            # meaningless and would immediately be overridden on the next
-            # node drag.
-        )
+        # Edges are deliberately NOT mouse-interactive.
+        #
+        # The previous version set ItemIsSelectable and left
+        # setAcceptedMouseButtons at its default (all buttons). With
+        # those, QGraphicsView.itemAt() would return the edge for any
+        # press that landed inside the edge's shape() — which, for two
+        # nodes placed close enough to connect, includes a band that
+        # runs through the overlapping portion of the two node rects.
+        # The press was routed to the edge, the view held the mouse
+        # grab on the edge, and the node underneath never saw the
+        # press: "connected nodes can't be dragged".
+        #
+        # Removing ItemIsSelectable and refusing all mouse buttons
+        # means itemAt() skips the edge for hit-testing purposes and
+        # presses always reach the node under the cursor. The edge is
+        # still removable via the canvas context menu, which is the
+        # only interaction it needs.
+        #
+        # ItemIsMovable was already correctly absent: edges derive
+        # their position from their endpoints, so dragging one is
+        # meaningless.
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         self.setZValue(self.Z_VALUE)
 
         # Subscribe to both endpoints. On any node move, re-lay-out.
@@ -161,25 +194,28 @@ class ConnectionItem(QGraphicsObject):
 
     def _clipped_line(self) -> Optional[QLineF]:
         """
-        The visible edge: the centre-to-centre line, trimmed at both ends to
-        the border of the respective node rect.
+        The visible edge: the centre-to-centre line, trimmed at both ends
+        to the border of the respective node rect.
 
-        Suppression rule: return None only when the two node *centres* are
-        closer than half a node's diagonal, i.e. effectively at the same
-        spot, where no meaningful edge exists. Two nodes whose rects merely
-        intersect (drawn near each other but not on top of each other) still
-        produce an edge; the overlapping portions of the line are hidden
-        behind the nodes because the edge is at z=-1.
+        Suppression rule (revised): return None only when the two node
+        *centres* are within LINE_WIDTH of each other — i.e. the two nodes
+        are visually stacked and there is no meaningful edge to draw.
 
-        An earlier version of this method returned None whenever the two
-        node rects intersected. That was too strict: in normal use the user
-        places nodes a few dozen pixels apart, their 120x60 rects overlap,
-        and the edge was silently suppressed even though the nodes were
-        visually distinct and clearly connectable.
+        The previous threshold was half the node diagonal, which for a
+        120x60 node is ~67 px. That suppressed the edge for any two nodes
+        placed within 67 px of each other — a completely normal spacing
+        for two nearby cards the user is trying to connect — which is
+        why connected nodes sometimes showed no visible line at all.
+        Two nodes drawn slightly apart from one another have a meaningful
+        edge at any non-zero distance.
+
+        Fallback: if either clip fails (which happens when the two node
+        rects overlap such that one centre lies inside the other rect),
+        return the raw centre-to-centre line rather than None. The portion
+        of the raw line that lies inside a node body is hidden behind that
+        node (edge z = -1), so the visible result still reads as a
+        connection between the two nodes.
         """
-        from_rect = self.from_node.rect_in_scene()
-        to_rect = self.to_node.rect_in_scene()
-
         from_centre = self.from_node.scene_centre()
         to_centre = self.to_node.scene_centre()
 
@@ -187,15 +223,12 @@ class ConnectionItem(QGraphicsObject):
         dy = to_centre.y() - from_centre.y()
         centre_distance = (dx * dx + dy * dy) ** 0.5
 
-        # Half-diagonal of a node rect. For a 120x60 node this is about 67.
-        # If centres are closer than that, the nodes are visually stacked
-        # and there is no meaningful edge to draw.
-        half_diag = (
-            (from_rect.width() ** 2 + from_rect.height() ** 2) ** 0.5
-        ) / 2.0
-
-        if centre_distance < half_diag:
+        # Only refuse when the centres are effectively coincident.
+        if centre_distance < self.LINE_WIDTH:
             return None
+
+        from_rect = self.from_node.rect_in_scene()
+        to_rect = self.to_node.rect_in_scene()
 
         raw = self._raw_line()
         p_start = self._exit_point_of_rect(raw, from_rect)
@@ -204,9 +237,10 @@ class ConnectionItem(QGraphicsObject):
         )
 
         if p_start is None or p_end is None:
-            # Nodes are separated, so both clips must succeed. Fall back to
-            # the raw line if something unexpected happens (e.g. a future
-            # change to anchoring), rather than drawing nothing.
+            # Nodes overlap (one centre is inside the other's rect), or
+            # the clip otherwise failed. Fall back to the raw line rather
+            # than suppressing the edge entirely; the node bodies will
+            # cover the portions of the line that pass through them.
             return raw
 
         return QLineF(p_start, p_end)
@@ -241,11 +275,17 @@ class ConnectionItem(QGraphicsObject):
         """
         Hit-test shape: a stroke around the *clipped* edge only.
 
-        Because the clipped edge lives entirely in the gap between the two
-        node rects, clicks that land on a node body cannot select the edge -
-        which is what makes dragging a connected node work reliably.
-        When there is no meaningful edge (centres coincident), the shape is
-        empty and the edge cannot be clicked at all.
+        This shape is still consulted by the scene's itemAt() when
+        deciding which item is under the cursor. Because edges now
+        accept no mouse buttons (see __init__), a press that lands on
+        this shape does not select the edge; the scene simply skips
+        the edge and considers the next item, which is the node behind
+        it. The shape is retained because a future "click to select
+        the edge" gesture — if the user wants one — would reuse it,
+        and because QGraphicsItem expects a shape() implementation.
+
+        When there is no meaningful edge (centres coincident), the
+        shape is empty.
         """
         path = QPainterPath()
         clipped = self._clipped_line()
@@ -271,7 +311,9 @@ class ConnectionItem(QGraphicsObject):
         Priority:
           1. Selection — a selected edge is always the brighter blue,
              regardless of endpoint status, so the user can always see
-             what they have selected.
+             what they have selected. (Currently unreachable from a
+             left-click, since edges accept no mouse buttons; retained
+             for a future explicit-selection gesture.)
           2. DOWN — if either endpoint is DOWN, muted red.
           3. DEGRADED — if either endpoint is DEGRADED, muted amber.
           4. Default — muted green.

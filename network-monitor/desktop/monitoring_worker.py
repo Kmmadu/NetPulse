@@ -8,15 +8,32 @@ Design:
     with Qt.QueuedConnection / BlockingQueuedConnection. Do NOT call its
     methods directly from the GUI thread; use the signals and the
     blocking-invoke pattern declared below.
-  - The worker owns a MonitoringEngine constructed with its own database
-    file (desktop/data/desktop_monitor.db). It does NOT share the CLI's
-    database, by design. That file is deleted at the start of every session
-    so it acts as a per-session scratch file: MonitoringEngine.check_single_device
-    writes devices into the `devices` table via Database._ensure_devices_synced()
-    on first ping, and without a reset the file accumulates a permanent
-    record of every device ever pinged — including ones not present on the
-    current canvas. Milestone 8 will replace this with real persistence
-    driven by the canvas.
+  - The worker owns a MonitoringEngine constructed with the desktop
+    database file (desktop/data/desktop_monitor.db). As of Milestone 8,
+    this file is NOT deleted at session start: it is the persistent
+    store the canvas loads its topology from on startup, and writes to
+    on every add, delete, edit, move, and connection change.
+
+    Important sequencing note: MonitoringEngine.__init__ runs its own
+    load_devices_from_db() and _run_initial_state_check() before
+    returning. That means the engine pings every row in the devices
+    table *during construction*, on the worker thread, before
+    on_thread_started has a chance to clear engine.devices and before
+    the canvas has registered anything. So the "only devices the canvas
+    registered are pinged" property holds for the *cycle* timer and for
+    steady-state operation, but NOT for the very first check the engine
+    performs at construction. Devices in the DB that are not on the
+    canvas will be pinged once at startup, and DOWN devices among them
+    can fire alerts. The clear below cannot prevent that; it only
+    prevents subsequent cycles from pinging them.
+
+    In practice this is benign for the desktop app, because the DB is
+    populated only by the canvas (load_desktop_devices INNER JOINs on
+    topology_positions, and node delete / clear_topology cascade). The
+    case where it bites is a DB that has device rows without matching
+    position rows — which should not happen given the Drop 0a rule
+    that a device belongs to the topology iff it has a position row,
+    but is worth knowing about if it ever does.
   - The worker does NOT call monitor_forever(). That loop has no
     cooperative shutdown path and would need QThread.terminate() to stop.
     Instead, a QTimer fires every INTERVAL_SECONDS on the worker thread
@@ -65,7 +82,6 @@ Shutdown:
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -81,11 +97,10 @@ from app.models.device import Device, DeviceStatus  # noqa: E402
 from app.core.monitor_engine import MonitoringEngine  # noqa: E402
 
 
-# Where the desktop app keeps its own monitoring database. Relative to
-# desktop/ because the desktop app is launched from there. Created
-# automatically by Database.__init__ on first use, and DELETED at the
-# start of every session (see _reset_desktop_db) so it acts as a
-# per-session scratch file until Milestone 8 introduces real persistence.
+# Where the desktop app keeps its monitoring database. Relative to
+# desktop/ because the desktop app is launched from there. As of
+# Milestone 8 this file is persistent: it holds the topology the canvas
+# saves and loads. Created automatically by Database.__init__ on first use.
 _DB_PATH = str(Path(__file__).resolve().parent / "data" / "desktop_monitor.db")
 
 # How often the worker runs a full check cycle. 5 seconds: fast enough that
@@ -106,42 +121,6 @@ INTERVAL_SECONDS = 5
 PING_COUNT = 3          # matches MonitoringEngine.ping(count=3) default
 PING_TIMEOUT = 2        # matches Device(timeout=2) below
 RETRY_COUNT = 2         # matches Device(retry_count=2) below
-
-
-def _reset_desktop_db() -> None:
-    """
-    Delete the desktop app's monitoring database, if it exists, so the
-    current session starts with an empty devices table.
-
-    Rationale: MonitoringEngine.check_single_device() writes a device row
-    into the `devices` table the first time it pings that device, via
-    Database._ensure_devices_synced(). Without a reset, every session
-    accumulates rows for devices that were pinged once and never seen
-    again — including ones never created in the current session — and the
-    engine's initial-state check pings all of them. That both slows
-    startup and fills the terminal with cycles for invisible devices.
-
-    Deleting the file (rather than deleting rows within it) also removes
-    the -wal and -shm sidecar files cleanly, and is one operation instead
-    of three.
-
-    Milestone 8 replaces this: the desktop app will persist topology
-    deliberately, and the DB will be the source of truth the canvas loads
-    from. Until then, the desktop DB is a per-session scratch file.
-    """
-    db_path = Path(_DB_PATH)
-    for suffix in ("", "-wal", "-shm"):
-        p = Path(str(db_path) + suffix)
-        if p.exists():
-            try:
-                os.remove(p)
-            except OSError as exc:
-                # Non-fatal: worst case the engine appends to an existing
-                # DB this session. Report and continue.
-                print(
-                    f"[worker] could not remove {p}: {exc!r}",
-                    file=sys.stderr,
-                )
 
 
 class MonitoringWorker(QObject):
@@ -168,7 +147,7 @@ class MonitoringWorker(QObject):
 
     Every method of this class except __init__ runs on the worker thread.
     Do not touch self._engine, self._timer, or self._pending_registrations
-    from the GUI thread.
+    from the GUI thread, except via get_database() (see below).
     """
 
     engineReady = Signal()
@@ -198,10 +177,20 @@ class MonitoringWorker(QObject):
     @Slot()
     def on_thread_started(self) -> None:
         """
-        Reset the per-session DB, construct the engine, and schedule the
-        timer. Connected to the QThread's started signal (queued
-        connection). Runs on the worker thread the moment the thread
-        enters its event loop.
+        Construct the engine and schedule the timer. Connected to the
+        QThread's started signal (queued connection). Runs on the worker
+        thread the moment the thread enters its event loop.
+
+        Note: as of Milestone 8, the desktop DB is NOT reset here. It is
+        the persistent store the canvas reads and writes.
+
+        Sequencing caveat: MonitoringEngine.__init__ runs its own initial
+        state check, pinging every device it loaded from the DB, BEFORE
+        this method has a chance to clear engine.devices. So the clear
+        below does not prevent the constructor's pings — it only prevents
+        subsequent cycles from pinging devices the canvas has not
+        registered. See the module docstring for the full explanation and
+        when this matters.
 
         The timer is not created here directly. QThread.started is emitted
         before the thread's event loop is running, and a QTimer started at
@@ -209,9 +198,12 @@ class MonitoringWorker(QObject):
         creation to the next event-loop turn, by which point the loop is
         definitely live.
         """
-        _reset_desktop_db()
-
         self._engine = MonitoringEngine(db_path=_DB_PATH)
+        # The engine's constructor has already loaded devices from the DB
+        # and pinged them in its initial state check. Clear the dict so
+        # subsequent cycles only ping what the canvas registers. This
+        # clear does NOT undo the constructor's pings; see the sequencing
+        # caveat above.
         self._engine.devices.clear()
 
         for device_id, name, ip_address in self._pending_registrations:
@@ -259,6 +251,39 @@ class MonitoringWorker(QObject):
             self._timer.stop()
             self._timer.deleteLater()
             self._timer = None
+
+    # ------------------------------------------------------------------
+    # Database access — used by the GUI thread after engineReady
+    # ------------------------------------------------------------------
+
+    def get_database(self):
+        """
+        Return the Database instance the engine is using, or None if the
+        engine is not yet constructed.
+
+        Called from the GUI thread in MainWindow's engineReady handler,
+        immediately after engineReady fires. At that point self._engine
+        is guaranteed non-None and self._engine.db is guaranteed to be a
+        Database instance, because on_thread_started constructs the
+        engine with a Database before emitting engineReady.
+
+        Why this method exists: the canvas needs to persist its topology
+        (see Milestone 8). The Database class uses threading.local for
+        its connections, so the same instance can be safely used from
+        multiple threads — each thread lazily creates and configures its
+        own SQLite connection on first access. This method is the single
+        point where the GUI thread reaches across to the worker's engine;
+        it is deliberately an explicit accessor rather than a raw
+        attribute read, so the coupling is visible and can be changed
+        (e.g. to a future dedicated persistence Database) without
+        touching the canvas.
+
+        Returns None if called before engineReady. Callers should connect
+        to engineReady and call this from the resulting slot.
+        """
+        if self._engine is None:
+            return None
+        return getattr(self._engine, "db", None)
 
     # ------------------------------------------------------------------
     # Device registration — slots, run on the worker thread

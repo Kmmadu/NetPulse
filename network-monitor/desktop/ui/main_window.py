@@ -24,7 +24,31 @@ modal dialog before terminate() runs, rather than being a silent print.
 Milestone 7.102: adds the find feature's entry points. The header's find
 button (header.findRequested) opens the canvas's find bar via
 show_find_bar, and Ctrl+F does the same from anywhere in the window.
+
+Milestone 8: wires persistence. Once the worker's engine is up
+(engineReady), the worker's Database instance is handed to the canvas
+via canvas.set_database(), and the canvas loads the saved topology from
+it via canvas.load_topology(). On close, any debounced position changes
+still pending are flushed before the worker is stopped, so a drag that
+ended less than 500 ms before the window closed is not lost. Nothing in
+the shutdown ordering changed; the flush is one line at the top of
+closeEvent, before the existing blocking worker stop.
+
+Milestone 8 (view): adds Ctrl+H as the "Home" keyboard shortcut. It
+calls canvas.fit_to_window(), the same action as the header's Fit menu
+item and the same action the canvas performs automatically after
+load_topology(). Three entry points, one method.
+
+Milestone 8 (view, revision): the canvas starts at 75% zoom rather than
+100%. On a fresh DB this is the opening state; on a reopen with a saved
+topology, the default is immediately overridden by load_topology()'s
+auto-fit, so the user always ends up seeing their nodes framed. The
+default matters only for the empty-canvas case, where auto-fit has
+nothing to fit and would otherwise leave the view at whatever scale the
+transform happens to be.
 """
+
+import sys
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QMessageBox,
@@ -60,6 +84,14 @@ class MainWindow(QMainWindow):
         # width. No sidebar reserves horizontal space.
         self.canvas = TopologyCanvas(self)
         self.header = HeaderBar(self)
+
+        # Default view for a fresh canvas. 75% is small enough that a
+        # handful of nodes placed near the origin do not crowd the
+        # window, and large enough that the grid and node labels are
+        # still legible. Overridden by load_topology()'s auto-fit when
+        # there is a saved topology to show; that is the intended
+        # precedence — fit-to-topology beats fit-to-default.
+        self.canvas.set_zoom(0.75)
 
         central = QWidget(self)
         central_layout = QVBoxLayout(central)
@@ -98,6 +130,20 @@ class MainWindow(QMainWindow):
         find_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         find_shortcut.activated.connect(self.canvas.show_find_bar)
 
+        # Ctrl+H fits the view to the current topology — the "Home"
+        # action. Same as the "Fit" entry at the top of the header's
+        # zoom menu. Application-level so it works regardless of focus.
+        #
+        # Ctrl+H is chosen because it is unused elsewhere and its
+        # mnemonic ("H" for Home) is natural. Ctrl+0 is already taken by
+        # reset-to-100%-at-origin, which is a different operation: it
+        # snaps the transform to identity, whereas Fit computes a scale
+        # from the node bounding box. Both are useful; neither replaces
+        # the other.
+        fit_shortcut = QShortcut(QKeySequence("Ctrl+H"), self)
+        fit_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        fit_shortcut.activated.connect(self.canvas.fit_to_window)
+
         # ------------------------------------------------------------------
         # Monitoring worker and thread
         # ------------------------------------------------------------------
@@ -113,7 +159,7 @@ class MainWindow(QMainWindow):
 
         # Lifecycle wiring.
         #   thread.started       -> worker.on_thread_started
-        #   worker.engineReady   -> status bar update
+        #   worker.engineReady   -> status bar update + persistence setup
         #   worker.cycleComplete -> canvas.on_cycle_complete
         #   worker.registerNode  -> worker.on_register_node
         #   worker.unregisterNode -> worker.on_unregister_node
@@ -142,6 +188,17 @@ class MainWindow(QMainWindow):
 
         self.canvas.attach_worker(self._worker)
 
+        # Persistence wiring (Milestone 8). When the worker's engine is
+        # ready, hand the canvas its Database and load the saved topology
+        # from it. The engineReady signal fires from the worker thread;
+        # the slot runs on the GUI thread via Qt's automatic queued
+        # dispatch. That ordering is why we connect here and not earlier:
+        # until engineReady fires, self._worker._engine is None and there
+        # is no Database to hand over.
+        self._worker.engineReady.connect(
+            self._on_engine_ready_for_persistence
+        )
+
         self._worker_thread.start()
 
         self.statusBar().showMessage("Starting monitoring engine…")
@@ -163,6 +220,36 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Monitoring active — cycle interval {INTERVAL_SECONDS}s."
         )
+
+    def _on_engine_ready_for_persistence(self) -> None:
+        """
+        Hand the worker's Database to the canvas and load the saved
+        topology.
+
+        The Database instance is shared with the worker thread. That is
+        safe: Database uses threading.local for its connections, so the
+        GUI thread lazily creates and configures its own SQLite
+        connection on first access. No locking or handoff is required.
+
+        Called once, from the GUI thread, when the worker's engineReady
+        signal fires — at which point self._worker._engine exists and
+        self._worker.get_database() returns a live Database.
+
+        If get_database() returns None (should not happen given the
+        engineReady contract), persistence is disabled for this session
+        and a warning is printed. The rest of the app still works.
+        """
+        db = self._worker.get_database()
+        if db is None:
+            print(
+                "[main_window] engineReady fired but worker has no DB; "
+                "persistence disabled for this session.",
+                file=sys.stderr,
+            )
+            return
+
+        self.canvas.set_database(db)
+        self.canvas.load_topology()
 
     # ------------------------------------------------------------------
     # SMTP configuration
@@ -239,6 +326,13 @@ class MainWindow(QMainWindow):
         Stop the worker cooperatively, then quit and join the thread.
 
         Order and mechanism:
+          0. Flush any pending debounced position saves. This is a
+             Milestone 8 addition and must happen before the worker is
+             stopped, because the flush writes through the Database
+             instance and we want that write to complete while the
+             application is still live. flush_pending_saves() is a
+             no-op if nothing is pending and a no-op if persistence
+             was never enabled.
           1. Invoke worker.on_stop BLOCKING on the worker thread. This
              runs the timer stop + deleteLater + reference drop to
              completion before we return, so the worker's QTimer is
@@ -276,6 +370,11 @@ class MainWindow(QMainWindow):
         it is logged loudly to stderr and reported to the user via a
         modal dialog so the failure is not silent.
         """
+
+        # Persistence flush. Before the worker stops, so the write goes
+        # through a live Database instance rather than racing teardown.
+        self.canvas.flush_pending_saves()
+
         QMetaObject.invokeMethod(
             self._worker,
             "on_stop",
@@ -298,7 +397,6 @@ class MainWindow(QMainWindow):
             # within the (very generous) timeout. Log loudly and warn the
             # user before doing anything drastic, so the failure is
             # visible rather than silent.
-            import sys
             print(
                 f"[SHUTDOWN-FAILURE] worker thread did not exit in "
                 f"{wait_ms}ms; forcing termination. This indicates the "

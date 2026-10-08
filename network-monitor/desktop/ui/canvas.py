@@ -41,14 +41,62 @@ zoomChanged, and repositions itself to the top-centre of the current
 viewport on every change. Without this, panning or zooming would move
 the scene under a stationary overlay and the bar would visually drift
 away from the top of what the user is looking at.
+
+Milestone 8: adds persistence. The canvas holds a reference to the
+Database instance constructed by the worker's MonitoringEngine, set via
+set_database() from MainWindow once the engine is ready. Every add,
+delete, edit, connection, and disconnection writes through to the DB.
+Node position changes are debounced (500 ms) and flushed in a batch, so
+a drag writes one row per node, not one per pixel. save_topology,
+load_topology, and flush_pending_saves are the top-level persistence
+operations; the incremental hooks are small calls inside the existing
+node/edge lifecycle methods.
+
+Milestone 8 (view): load_topology auto-fits the view to the loaded
+topology. Without this, the canvas opens at 100% scrolled to the scene
+origin, which is rarely where the user's nodes are. The Ctrl+H shortcut
+and the header's Fit menu item both call fit_to_window() for the "Home"
+action. Deliberately no exact-view restoration: reopening at a scale
+that shows the whole topology is more useful than reopening at the
+scale the user was last at, which may have been a deep zoom into a
+single node.
+
+Milestone 8 (delete): deleting nodes asks for confirmation, gated on
+persistence being active. The Z1 decision from Milestone 2 was deferred
+until persistence made a node delete unrecoverable; that time has
+arrived. Edge deletes are not confirmed. The confirmation is in
+delete_selected_items (the single funnel for all node deletion) rather
+than at each call site, so every path gets the same treatment.
+
+Milestone 8 (Drop 0a): two semantic fixes from review.
+
+  1. Add-node writes metadata and initial position in one transaction
+     (_save_new_node -> Database.save_device_with_position). Previously
+     it wrote metadata eagerly and left the position to the 500 ms
+     debounce, so a crash in between produced a devices row with no
+     topology_positions row — invisible to the canvas but still pinged
+     at startup. Subsequent moves are still debounced; only the initial
+     write is atomic with the metadata.
+
+  2. clear_topology now cascade-deletes each device (which removes its
+     logs and state_changes too) rather than leaving device and log
+     rows in place to be "preserved as history". The old promise was
+     false: a device row with no position row is an orphan the engine
+     pings, and preserving it was neither possible nor desirable. The
+     rule is now consistent with node delete — a device belongs to a
+     topology iff it has a position row, and clearing removes it
+     entirely.
 """
 
 from PySide6.QtWidgets import (
     QGraphicsView,
     QGraphicsScene,
     QMenu,
+    QMessageBox,
 )
-from PySide6.QtCore import Qt, QPointF, QPoint, QRectF, Slot, Signal
+from PySide6.QtCore import (
+    Qt, QPointF, QPoint, QRectF, Slot, Signal, QTimer,
+)
 from PySide6.QtGui import (
     QPainter, QKeyEvent, QContextMenuEvent, QCursor,
     QWheelEvent, QMouseEvent, QColor,
@@ -131,6 +179,35 @@ class TopologyCanvas(QGraphicsView):
         # canvas operates in "no monitoring" mode (all nodes UNKNOWN).
         self._worker = None
 
+        # ------------------------------------------------------------------
+        # Persistence (Milestone 8)
+        # ------------------------------------------------------------------
+        # self._db is a Database instance, set by set_database() from
+        # MainWindow once the worker's engine is up. Until then, the canvas
+        # operates in "no persistence" mode: adds, edits, deletes, moves,
+        # and connections all work, but nothing is written to disk.
+        #
+        # Position saves are debounced: a node dragged across the canvas
+        # fires positionChanged once per pixel of mouse movement, and
+        # writing a DB row per pixel would be absurd. Instead, position
+        # updates land in self._pending_position_saves (a dict keyed by
+        # device_id), and a single-shot QTimer flushes them in one batch
+        # 500 ms after the last change. The timer is restarted on every
+        # new position change, so the write happens once per drag, not
+        # once per pixel.
+        #
+        # The *initial* position of a freshly-added node is NOT debounced;
+        # it is written in the same transaction as the metadata, via
+        # _save_new_node. Only subsequent moves go through the debounce.
+        self._db = None
+        self._pending_position_saves: dict = {}
+        self._position_save_timer = QTimer(self)
+        self._position_save_timer.setSingleShot(True)
+        self._position_save_timer.setInterval(500)
+        self._position_save_timer.timeout.connect(
+            self._on_position_save_timer
+        )
+
         # Middle-button pan state.
         self._pan_active = False
         self._pan_last_pos: QPoint | None = None
@@ -190,6 +267,368 @@ class TopologyCanvas(QGraphicsView):
         by MainWindow before the thread starts.
         """
         self._worker = worker
+
+    # ------------------------------------------------------------------
+    # Persistence (Milestone 8)
+    # ------------------------------------------------------------------
+
+    def set_database(self, db) -> None:
+        """
+        Give the canvas the Database instance to persist through.
+
+        Called by MainWindow after the worker's engineReady signal fires,
+        at which point the worker's engine (and its Database) has been
+        constructed. The Database instance is shared with the worker
+        thread; Database uses threading.local for its connections, so the
+        GUI thread will lazily create and configure its own SQLite
+        connection on first access. No special handling is required here.
+
+        Idempotent: calling twice replaces the reference. Null-safe: pass
+        None to disable persistence (used by tests).
+        """
+        self._db = db
+
+    def save_topology(self) -> None:
+        """
+        Write the full current scene state to the DB in one pass.
+
+        Iterates nodes and connections. For each node: save_device_metadata
+        and save_device_position. For each connection: save_connection.
+
+        Failures are logged inside the Database methods and are not raised;
+        save_topology returns None either way. A failed save is not worth
+        crashing the GUI over.
+
+        This is a full write, not the incremental path. The incremental
+        path (used during normal editing) is: _save_new_node on add,
+        _save_node_metadata on edit, _schedule_position_save on move, and
+        the connection hooks on edge add/remove. save_topology exists for
+        cases where a caller wants to guarantee everything is on disk
+        without caring how it got there — e.g. a future "Save" menu item
+        that writes to the current topology file.
+        """
+        if self._db is None:
+            return
+
+        nodes = [
+            item for item in self._scene.items()
+            if isinstance(item, DeviceNode)
+        ]
+        for node in nodes:
+            self._db.save_device_metadata(
+                device_id=node.device_id,
+                name=node.name,
+                ip_address=node.ip_address,
+                device_type=node.device_type.value,
+                monitoring_enabled=node.monitoring_enabled,
+            )
+            pos = node.pos()
+            self._db.save_device_position(
+                node.device_id, pos.x(), pos.y()
+            )
+
+        for conn in self._connections:
+            self._db.save_connection(
+                conn.from_node.device_id,
+                conn.to_node.device_id,
+            )
+
+    def load_topology(self) -> None:
+        """
+        Rebuild the scene from the DB.
+
+        Called by MainWindow after set_database(), once on startup. Reads
+        devices, positions, and connections in three queries, then
+        constructs the corresponding DeviceNode and ConnectionItem
+        objects.
+
+        The scene is assumed empty at call time — this runs immediately
+        after MainWindow constructs the canvas, before the user has had a
+        chance to add anything. If the scene is not empty, existing items
+        are removed first (defensive), but that is not the intended path.
+
+        Node identity: the device_id read from the DB is injected onto the
+        newly-created DeviceNode, overriding the fresh UUID the constructor
+        assigns. This is what makes connections resolvable after load and
+        what makes subsequent edits write back to the correct rows.
+
+        Monitoring registration: after all nodes are created, each
+        monitoring-enabled node with an IP address is registered with the
+        worker, exactly as add_device_node would do. This happens on the
+        GUI thread via signal emission; the worker queues the registration
+        and processes it on its own thread.
+
+        View: on completion, the view auto-fits to the loaded topology so
+        the user sees the whole canvas rather than the scene origin. See
+        the auto-fit note at the end of the method for why exact-view
+        restoration is deliberately not attempted.
+        """
+        if self._db is None:
+            return
+
+        # Defensive clear: the caller is expected to call this on an empty
+        # scene, but if not, do not leave orphans behind.
+        for item in list(self._scene.items()):
+            if isinstance(item, (DeviceNode, ConnectionItem)):
+                self._scene.removeItem(item)
+        self._connections.clear()
+
+        devices = self._db.load_desktop_devices()
+        positions = self._db.load_device_positions()
+
+        # device_id -> DeviceNode, for the connection pass.
+        by_id: dict = {}
+
+        for d in devices:
+            device_id = d["device_id"]
+            name = d["name"]
+            ip_address = d["ip_address"]
+            device_type_str = d["device_type"]
+            monitoring_enabled = d["monitoring_enabled"]
+
+            # Map the stored string back to the DeviceType enum. Fall back
+            # to GENERIC if the string is unrecognised (which can only
+            # happen if the DB was edited out of band).
+            try:
+                device_type = DeviceType(device_type_str)
+            except ValueError:
+                device_type = DeviceType.GENERIC
+
+            node = DeviceNode(
+                name=name,
+                ip_address=ip_address,
+                device_type=device_type,
+                monitoring_enabled=monitoring_enabled,
+            )
+            # Override the freshly-generated UUID with the persisted one.
+            node.device_id = device_id
+
+            # Position: from the saved position table if present, else
+            # canvas centre. A node saved without a position (possible if
+            # the process died between metadata write and the debounced
+            # position write) falls back gracefully rather than stacking
+            # at (0, 0).
+            #
+            # Note: load_desktop_devices() INNER JOINs on
+            # topology_positions, so a device with no position row is not
+            # returned by it and this branch is unreachable *for that
+            # case*. It remains as a defensive fallback in case the query
+            # ever changes to a LEFT JOIN, or if a position row exists
+            # with NULL coordinates.
+            if device_id in positions:
+                x, y = positions[device_id]
+                node.setPos(QPointF(x, y))
+            else:
+                centre = self.mapToScene(self.viewport().rect().center())
+                node.setPos(
+                    centre - QPointF(DeviceNode.WIDTH / 2, DeviceNode.HEIGHT / 2)
+                )
+
+            node.doubleClicked.connect(self._on_node_double_clicked)
+            # Subscribe to position changes for the debounced save. This
+            # is the same subscription that add_device_node installs for
+            # freshly-created nodes; doing it here means loaded nodes are
+            # persisted-on-move exactly like new ones.
+            node.positionChanged.connect(
+                lambda _pt, n=node: self._schedule_position_save(n)
+            )
+
+            self._scene.addItem(node)
+            by_id[device_id] = node
+
+        # Connections: second pass, now that all nodes exist.
+        for row in self._db.load_connections():
+            from_node = by_id.get(row["from_device_id"])
+            to_node = by_id.get(row["to_device_id"])
+            if from_node is None or to_node is None:
+                # A connection whose endpoint is missing means an
+                # inconsistency (endpoint device row deleted outside the
+                # canvas, or a partial save). Skip it; the DB will
+                # eventually be cleaned by the FK cascade if the device
+                # is ever properly deleted.
+                continue
+            conn = ConnectionItem(from_node, to_node)
+            self._scene.addItem(conn)
+            self._connections.append(conn)
+
+        # Register monitoring for loaded nodes. Same conditions as
+        # add_device_node: only if the worker exists, the node has an IP,
+        # and monitoring is enabled.
+        if self._worker is not None:
+            for node in by_id.values():
+                if node.monitoring_enabled and node.ip_address:
+                    self._worker.registerNode.emit(
+                        node.device_id, node.name, node.ip_address
+                    )
+
+        # Auto-fit the view to the loaded topology. Without this, the
+        # canvas opens at 100% zoom scrolled to the scene origin, which
+        # is almost never where the user's nodes are — especially if the
+        # user has several nodes placed a thousand pixels from origin.
+        # fit_to_window() is a no-op when the scene has no nodes, so a
+        # first-time launch with an empty DB is unaffected.
+        #
+        # Deliberately not restoring an exact saved zoom/pan. Reason: a
+        # user who was zoomed into one node when they closed the app
+        # would reopen looking at that node with no context — worse than
+        # reopening at a zoom that shows the whole topology. Auto-fit is
+        # always the right answer on reopen; the exact view is not.
+        self.fit_to_window()
+
+    def flush_pending_saves(self) -> None:
+        """
+        Write any pending debounced position saves immediately, and stop
+        the timer.
+
+        Called by MainWindow.closeEvent, before worker shutdown, so a
+        drag that ended less than 500 ms before the window closed is not
+        lost. Idempotent: calling when nothing is pending is a no-op.
+        """
+        if self._position_save_timer.isActive():
+            self._position_save_timer.stop()
+        self._on_position_save_timer()
+
+    def _schedule_position_save(self, node: DeviceNode) -> None:
+        """
+        Queue a position save for `node` and (re)start the debounce timer.
+
+        Called from the node's positionChanged signal, which fires once
+        per pixel of mouse movement during a drag. The dict keyed by
+        device_id coalesces multiple updates for the same node: only the
+        latest position survives.
+
+        Null-safe: does nothing when persistence is disabled.
+        """
+        if self._db is None:
+            return
+        pos = node.pos()
+        self._pending_position_saves[node.device_id] = (pos.x(), pos.y())
+        # Restart the timer. If it was already running, this resets the
+        # 500 ms countdown — the "quiet period" pattern. A continuous drag
+        # never lets it fire; only a pause (or release) does.
+        self._position_save_timer.start()
+
+    def _on_position_save_timer(self) -> None:
+        """
+        Flush all pending position saves. Called by the debounce timer,
+        or directly by flush_pending_saves().
+        """
+        if self._db is None:
+            self._pending_position_saves.clear()
+            return
+        pending = self._pending_position_saves
+        self._pending_position_saves = {}
+        for device_id, (x, y) in pending.items():
+            self._db.save_device_position(device_id, x, y)
+
+    def _save_node_metadata(self, node: DeviceNode) -> None:
+        """
+        Write the node's identity fields to the DB. Called after edit.
+
+        Null-safe. Failures are logged in the Database method and are not
+        raised.
+
+        Note: this method writes *only* metadata, not position. It is the
+        right call for an edit (name/ip/type/monitoring change, position
+        unchanged). It is NOT the right call for a fresh node — use
+        _save_new_node for that, so metadata and initial position land in
+        one transaction.
+        """
+        if self._db is None:
+            return
+        self._db.save_device_metadata(
+            device_id=node.device_id,
+            name=node.name,
+            ip_address=node.ip_address,
+            device_type=node.device_type.value,
+            monitoring_enabled=node.monitoring_enabled,
+        )
+
+    def _save_new_node(self, node: DeviceNode) -> None:
+        """
+        Write a freshly-created node's metadata AND initial position in
+        one transaction.
+
+        Called from add_device_node. The one-transaction write is the
+        Drop 0a fix: previously this path wrote metadata eagerly and left
+        position to the debounce timer, so a crash in the ~500 ms window
+        between the two writes left a device row with no matching
+        topology_positions row. That device would be invisible to the
+        canvas (load_desktop_devices INNER JOINs on positions) but still
+        returned by load_devices_from_db() and therefore pinged at
+        startup. Writing both together removes the window entirely.
+
+        Subsequent moves still go through _schedule_position_save; only
+        the initial position is written eagerly.
+
+        Null-safe: does nothing when persistence is disabled.
+        """
+        if self._db is None:
+            return
+        pos = node.pos()
+        self._db.save_device_with_position(
+            device_id=node.device_id,
+            name=node.name,
+            ip_address=node.ip_address,
+            device_type=node.device_type.value,
+            monitoring_enabled=node.monitoring_enabled,
+            x=pos.x(),
+            y=pos.y(),
+        )
+
+    def clear_topology(self) -> None:
+        """
+        Remove every node and connection from the scene and from the DB,
+        INCLUDING the devices rows and their cascaded history.
+
+        Backs the "New topology" context menu action. Confirmation is the
+        caller's responsibility (_confirm_and_clear_topology shows a
+        QMessageBox before invoking this).
+
+        Semantics (Drop 0a revision): a device belongs to a topology file
+        iff it has a position row. Clearing removes the device row, and
+        the FK cascade removes its position, connections, logs, and
+        state_changes. This matches node delete, which already uses
+        delete_device_cascade.
+
+        The previous version of this method claimed to "preserve device
+        history" by only deleting position rows. That promise was false:
+        a device row with no position row is an orphan that the engine
+        still pings on startup, and that any residue cleanup would
+        delete anyway. The rule is now consistent and honest.
+
+        Order: DB first, then scene. If the process dies between the two,
+        the DB is empty but the scene still has the nodes — on next launch
+        the topology comes back empty, which is what the user asked for.
+        The reverse order would leave DB rows with no scene items, which
+        on reload would resurrect a topology the user thought they had
+        cleared. Failing toward "cleared" is the right direction.
+        """
+        if self._db is not None:
+            for item in self._scene.items():
+                if isinstance(item, DeviceNode):
+                    self._db.delete_device_cascade(item.device_id)
+
+        # Unregister every node with the worker before removing it.
+        if self._worker is not None:
+            for item in self._scene.items():
+                if isinstance(item, DeviceNode):
+                    self._worker.unregisterNode.emit(item.device_id)
+
+        # Detach every connection (releases signal subscriptions), then
+        # remove all nodes and connections from the scene.
+        for conn in list(self._connections):
+            conn.detach()
+        self._connections.clear()
+
+        for item in list(self._scene.items()):
+            if isinstance(item, (DeviceNode, ConnectionItem)):
+                self._scene.removeItem(item)
+
+        # Cancel any pending position saves; they reference deleted nodes.
+        self._pending_position_saves.clear()
+        if self._position_save_timer.isActive():
+            self._position_save_timer.stop()
 
     @Slot(list)
     def on_cycle_complete(self, results: list) -> None:
@@ -288,7 +727,13 @@ class TopologyCanvas(QGraphicsView):
         If there are no nodes, do nothing — the canvas is empty and there
         is nothing to fit.
 
-        Also used by the header bar's "Fit" menu item.
+        Used by:
+          - load_topology(), on reopen, to frame the loaded topology.
+          - The header's "Fit" menu item (via fitRequested).
+          - MainWindow's Ctrl+H shortcut.
+
+        Idempotent: calling it twice in a row on an unchanged scene is a
+        no-op the second time (same scale, same centre).
         """
         nodes = [
             item for item in self._scene.items()
@@ -756,6 +1201,15 @@ class TopologyCanvas(QGraphicsView):
                 node.device_id, node.name, node.ip_address
             )
 
+        # Subscribe to positionChanged so subsequent drags are persisted.
+        # The *initial* position is not written through this path — see
+        # _save_new_node, which writes metadata and initial position in
+        # one transaction (Drop 0a fix).
+        node.positionChanged.connect(
+            lambda _pt, n=node: self._schedule_position_save(n)
+        )
+        self._save_new_node(node)
+
         return node
 
     def _on_node_double_clicked(self, node: DeviceNode) -> None:
@@ -786,6 +1240,12 @@ class TopologyCanvas(QGraphicsView):
         node.set_device_type(dialog.device_type)
         node.set_monitoring_enabled(dialog.monitoring_enabled)
         node._invalidate_cache()
+
+        # Persistence: name, ip, type, and monitoring_enabled may all have
+        # changed. Save metadata unconditionally; the DB method writes the
+        # same values back if nothing changed, which is cheap. Position is
+        # not affected by an edit, so it is not written here.
+        self._save_node_metadata(node)
 
         if self._worker is None:
             return
@@ -831,6 +1291,13 @@ class TopologyCanvas(QGraphicsView):
         conn = ConnectionItem(from_node, to_node)
         self._scene.addItem(conn)
         self._connections.append(conn)
+
+        # Persistence: write the edge.
+        if self._db is not None:
+            self._db.save_connection(
+                from_node.device_id, to_node.device_id
+            )
+
         return conn
 
     def _remove_connection(self, conn: ConnectionItem) -> None:
@@ -838,6 +1305,14 @@ class TopologyCanvas(QGraphicsView):
         if conn in self._connections:
             self._connections.remove(conn)
         self._scene.removeItem(conn)
+
+        # Persistence: remove the edge from the DB. Uses the
+        # direction-agnostic delete, so this works regardless of which
+        # way the row was inserted.
+        if self._db is not None:
+            self._db.delete_connection(
+                conn.from_node.device_id, conn.to_node.device_id
+            )
 
     # ------------------------------------------------------------------
     # Deletion
@@ -848,6 +1323,69 @@ class TopologyCanvas(QGraphicsView):
 
         selected_nodes = [it for it in selected if isinstance(it, DeviceNode)]
         selected_edges = [it for it in selected if isinstance(it, ConnectionItem)]
+
+        # Deferred decision Z1 (Milestone 8): confirm node deletion when
+        # persistence is active. Before M8, a delete was recoverable by
+        # restarting the app. After M8, it removes the device row and
+        # cascades to its position, connections, logs, and state changes —
+        # unrecoverable from within the app.
+        #
+        # Placed here rather than at each call site (Delete key, context
+        # menu, "New topology" is separate) so every path that deletes
+        # nodes goes through the same gate.
+        #
+        # Gated on self._db is not None. In the brief window between app
+        # launch and the worker's engineReady signal, persistence is off
+        # and a delete is still recoverable by restarting, so no prompt
+        # is needed. Everywhere else, the prompt fires.
+        #
+        # Edges are never confirmed. Losing an edge is trivial to redo
+        # (two right-clicks), and prompting would be noise.
+        if selected_nodes and self._db is not None:
+            # Summarise the loss. If one node, name it; if several,
+            # count them. Count the edges that will be removed as a
+            # consequence — both edges attached to a deleted node, and
+            # any edges the user explicitly selected alongside.
+            if len(selected_nodes) == 1:
+                summary = f"'{selected_nodes[0].name}'"
+            else:
+                summary = f"{len(selected_nodes)} devices"
+
+            attached_edges = sum(
+                1 for conn in self._connections
+                if conn.from_node in selected_nodes
+                or conn.to_node in selected_nodes
+            )
+            explicit_edges = sum(
+                1 for edge in selected_edges
+                if not (
+                    edge.from_node in selected_nodes
+                    or edge.to_node in selected_nodes
+                )
+            )
+            total_edges = attached_edges + explicit_edges
+
+            connection_phrase = (
+                f" and {total_edges} connection(s)" if total_edges else ""
+            )
+
+            reply = QMessageBox.question(
+                self,
+                (
+                    "Delete device"
+                    if len(selected_nodes) == 1
+                    else "Delete devices"
+                ),
+                f"Delete {summary}{connection_phrase}?\n\n"
+                "This also removes the device from the saved topology, "
+                "and its check history in the logs table. This cannot "
+                "be undone.",
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return 0
 
         removed = 0
 
@@ -862,6 +1400,15 @@ class TopologyCanvas(QGraphicsView):
                 self._worker.unregisterNode.emit(node.device_id)
             self._scene.removeItem(node)
             removed += 1
+
+        # Persistence: delete each removed node from the devices table.
+        # The FK cascade removes its topology_positions, connections,
+        # logs, and state_changes rows in the DB. We do this after the
+        # scene removal loop so the canvas is already consistent if the
+        # DB write fails.
+        if self._db is not None:
+            for node in selected_nodes:
+                self._db.delete_device_cascade(node.device_id)
 
         for conn in selected_edges:
             if conn in self._connections:
@@ -948,12 +1495,52 @@ class TopologyCanvas(QGraphicsView):
             act = add_menu.addAction(dtype.label)
             act.setData(dtype)
 
+        menu.addSeparator()
+        act_clear = menu.addAction("New topology…")
+
         chosen = menu.exec(event.globalPos())
         if chosen is None:
+            return
+        if chosen == act_clear:
+            self._confirm_and_clear_topology()
             return
         data = chosen.data()
         if isinstance(data, DeviceType):
             self._add_device_via_dialog(scene_pos, data)
+
+    def _confirm_and_clear_topology(self) -> None:
+        """
+        Show a confirmation dialog, and if the user accepts, clear the
+        canvas and the DB.
+
+        Confirmation is required because this is unrecoverable from within
+        the app: clearing removes every device, its history, and every
+        connection.
+
+        Message wording (Drop 0a): previously said "device history in the
+        logs table is preserved". That was false — clear_topology now
+        cascade-deletes the device, which removes its logs and
+        state_changes. The wording now names what actually happens.
+        """
+        node_count = sum(
+            1 for item in self._scene.items()
+            if isinstance(item, DeviceNode)
+        )
+        if node_count == 0:
+            # Nothing to clear. Do not show the dialog for an empty canvas.
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "New topology",
+            f"Remove all {node_count} device(s) and every connection?\n\n"
+            "This also removes those devices' check history from this "
+            "topology file. This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.clear_topology()
 
     def _add_device_via_dialog(
         self, scene_pos: QPointF, device_type: DeviceType

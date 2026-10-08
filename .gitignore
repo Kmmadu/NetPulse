@@ -66,3 +66,5 @@ network-monitor/desktop/data/alert_state.json
 network-monitor/desktop/data/*.db
 network-monitor/desktop/data/*.db-wal
 network-monitor/desktop/data/*.db-shm
+network-monitor/desktop/data/
+network-monitor/desktop/data/

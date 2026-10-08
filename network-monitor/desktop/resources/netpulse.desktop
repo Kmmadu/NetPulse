@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=NetPulse
+GenericName=Network Monitor
+Comment=Visual network topology monitoring
+Exec=netpulse
+Icon=netpulse
+Terminal=false
+Categories=Network;Monitor;System;
+Keywords=network;monitor;ping;topology;netpulse;
+StartupNotify=true
+StartupWMClass=NetPulse

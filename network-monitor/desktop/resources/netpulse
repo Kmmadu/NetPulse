@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+INSTALL_DIR="${INSTALL_DIR:-__INSTALL_DIR__}"
+VENV_DIR="${VENV_DIR:-__VENV_DIR__}"
+
+if [[ ! -d "$INSTALL_DIR" ]]; then
+    echo "NetPulse install directory not found: $INSTALL_DIR" >&2
+    exit 1
+fi
+
+if [[ ! -x "$VENV_DIR/bin/python3" ]]; then
+    echo "NetPulse venv not found: $VENV_DIR" >&2
+    echo "Re-run the installer: bash network-monitor/desktop/install.sh" >&2
+    exit 1
+fi
+
+cd "$INSTALL_DIR"
+exec "$VENV_DIR/bin/python3" main.py "$@"

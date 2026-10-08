@@ -1,4 +1,4 @@
-![NetPulse Dashboard](https://raw.githubusercontent.com/Kmmadu/NetPulse/main/network-monitor/web/dashboard.png)
+![NetPulse desktop — topology canvas](network-monitor/desktop/docs/dashboard.png)
 
 # NetPulse - Network Monitoring System
 

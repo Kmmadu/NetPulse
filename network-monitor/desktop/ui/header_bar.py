@@ -7,7 +7,7 @@ Contents, left to right:
                    in the accent blue (#6B9BFF).
     "Topology"   — a muted section label (#9AA0A6), the current view name.
     (stretch)    — pushes the rest to the right.
-    "File"       — opens a dropdown with Save As (New and Open to follow).
+    "File"       — opens a dropdown with New, Open…, Save As…
     [find]       — a small magnifier button opening the find bar.
     "Settings"   — opens the SMTP configuration dialog.
     "Zoom 100 %" — opens a dropdown of zoom presets and the Fit action.
@@ -23,6 +23,8 @@ Signals:
     fitRequested()           — user picked the "Fit" action from the dropdown.
     findRequested()          — user clicked the find button (or pressed Ctrl+F,
                                which is wired in MainWindow to the same slot).
+    fileNewRequested()       — user picked "New" from the File menu.
+    fileOpenRequested()      — user picked "Open…" from the File menu.
     fileSaveAsRequested()    — user picked "Save As…" from the File menu.
 
 The Zoom button's label is updated by `set_current_zoom`, which
@@ -54,6 +56,8 @@ class HeaderBar(QFrame):
     zoomRequested = Signal(float)
     fitRequested = Signal()
     findRequested = Signal()
+    fileNewRequested = Signal()
+    fileOpenRequested = Signal()
     fileSaveAsRequested = Signal()
 
     HEADER_HEIGHT = 40
@@ -150,11 +154,10 @@ class HeaderBar(QFrame):
         )
 
         # --- File button ----------------------------------------------
-        # Opens the File dropdown: Save As for now, with New and Open
-        # to follow. The button emits a signal; MainWindow owns the
-        # handler. Keeping the menu-contents decision in MainWindow
-        # means the header does not need to know about file paths, the
-        # session, or the worker.
+        # Opens the File dropdown: New, Open…, Save As…. The button
+        # emits signals; MainWindow owns the handlers. Keeping the
+        # menu-contents decision in MainWindow means the header does not
+        # need to know about file paths, the session, or the worker.
         self._file_button = QPushButton("File")
         self._file_button.setFlat(True)
         self._file_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -254,14 +257,31 @@ class HeaderBar(QFrame):
         """
         Build (if needed) and pop up the File menu below the File button.
 
-        Currently only Save As. New and Open will be added in a later
-        drop, once the worker-restart machinery they need is in place.
-        Greyed-out placeholder entries would be more honest than
-        omitting them, but they cannot be clicked and add confusion,
-        so they are omitted until they work.
+        Three entries:
+          - New          — Ctrl+N. Ask for a path, create an empty
+                           topology there, switch to it.
+          - Open…        — Ctrl+O. Ask for a file, switch to it.
+          - Save As…     — Ctrl+Shift+S. Ask for a target path, copy the
+                           current topology there, switch to it.
+
+        Every entry emits a signal; MainWindow handles the file I/O,
+        the session update, the worker restart, and the title update.
+        The header stays free of any knowledge of those.
         """
         if self._file_menu is None:
             self._file_menu = QMenu(self)
+
+            new_action = QAction("New", self._file_menu)
+            new_action.setShortcut(QKeySequence("Ctrl+N"))
+            new_action.triggered.connect(self.fileNewRequested.emit)
+            self._file_menu.addAction(new_action)
+
+            open_action = QAction("Open…", self._file_menu)
+            open_action.setShortcut(QKeySequence("Ctrl+O"))
+            open_action.triggered.connect(self.fileOpenRequested.emit)
+            self._file_menu.addAction(open_action)
+
+            self._file_menu.addSeparator()
 
             save_as_action = QAction("Save As…", self._file_menu)
             save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))

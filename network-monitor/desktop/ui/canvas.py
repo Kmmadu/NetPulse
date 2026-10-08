@@ -86,6 +86,12 @@ Milestone 8 (Drop 0a): two semantic fixes from review.
      rule is now consistent with node delete — a device belongs to a
      topology iff it has a position row, and clearing removes it
      entirely.
+
+Milestone 9 (Drop 2b): adds detach_for_file_switch, the non-destructive
+counterpart to clear_topology. Used when the app switches to a different
+topology file (File -> New, Open, Save As): the current file must keep
+its data, so we cannot use clear_topology. detach_for_file_switch empties
+the scene and drops the DB reference without writing any deletes.
 """
 
 from PySide6.QtWidgets import (
@@ -629,6 +635,74 @@ class TopologyCanvas(QGraphicsView):
         self._pending_position_saves.clear()
         if self._position_save_timer.isActive():
             self._position_save_timer.stop()
+
+    def detach_for_file_switch(self) -> None:
+        """
+        Clear the scene and release the canvas's references to the
+        current Database, WITHOUT writing any deletes to that Database.
+
+        Called by MainWindow before switching the app to a different
+        topology file (File -> New, File -> Open, File -> Save As).
+
+        The difference from clear_topology():
+          - clear_topology is destructive. It deletes the device rows in
+            the CURRENT file, cascading to their history, and then clears
+            the scene. After it runs, the current file is empty.
+          - detach_for_file_switch is non-destructive. The current file
+            keeps all its data; we are just moving the canvas away from
+            it. After it runs, the current file is unchanged and the
+            canvas is empty, ready to be pointed at a new file.
+
+        Sequence:
+          1. Unregister every node with the worker, so the old engine
+             stops pinging them before it is torn down. (The worker is
+             about to be replaced entirely, but this is still correct
+             form and prevents any race with a cycle that might be
+             in flight during the restart.)
+          2. Detach every connection, releasing its signal subscriptions
+             to the nodes.
+          3. Remove every node and connection from the scene.
+          4. Cancel any pending debounced position saves; they refer to
+             nodes that no longer exist and would write to a Database
+             we are about to drop.
+          5. Drop the Database reference. The canvas is now in the same
+             state as immediately after construction: empty scene, no
+             worker, no DB. MainWindow's restart sequence will reattach
+             a new worker and a new DB.
+
+        Does not touch the worker reference (self._worker). The worker
+        is still attached until MainWindow replaces it as part of the
+        restart. Emitting unregisterNode uses that still-attached worker,
+        which is correct — the old worker is still alive at this point
+        in the restart sequence.
+        """
+        # 1. Tell the old worker to stop pinging these devices. The old
+        #    worker is still running until MainWindow stops it, so this
+        #    emit goes to a live object.
+        if self._worker is not None:
+            for item in self._scene.items():
+                if isinstance(item, DeviceNode):
+                    self._worker.unregisterNode.emit(item.device_id)
+
+        # 2. Detach connections so their signal subscriptions to nodes
+        #    are released before the nodes are removed.
+        for conn in list(self._connections):
+            conn.detach()
+        self._connections.clear()
+
+        # 3. Remove scene items.
+        for item in list(self._scene.items()):
+            if isinstance(item, (DeviceNode, ConnectionItem)):
+                self._scene.removeItem(item)
+
+        # 4. Cancel pending saves.
+        self._pending_position_saves.clear()
+        if self._position_save_timer.isActive():
+            self._position_save_timer.stop()
+
+        # 5. Drop the DB reference. The canvas is now inert until
+        #    MainWindow's restart sequence hands it a new Database.
+        self._db = None
 
     @Slot(list)
     def on_cycle_complete(self, results: list) -> None:

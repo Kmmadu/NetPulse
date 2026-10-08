@@ -60,13 +60,24 @@ no session or the stored path no longer exists. That path is passed to
 MonitoringWorker, which passes it to MonitoringEngine, which opens a
 Database pointed at it.
 
-Milestone 9 (Drop 2a): File -> Save As. Copies the current topology
-file to a user-chosen path, updates the session to point at the copy,
-and updates the window title. The running worker continues on the
-original file for the remainder of the session; the copy is what the
-next launch will open. This is the smaller half of the File menu
-feature — the full "Save As restarts the app in the new file" and the
-File -> Open / File -> New items land in Drop 2b.
+Milestone 9 (Drop 2b): File menu is now complete.
+  - New:           ask for a path, create an empty topology there,
+                   switch to it.
+  - Open…:         ask for a file, switch to it.
+  - Save As…:      ask for a target, copy the current file there,
+                   switch to the copy.
+
+Switching files means replacing the worker entirely, because the engine
+holds a Database for its lifetime and cannot be re-pointed at a
+different file mid-run. The restart machinery is _restart_worker_with_new_path:
+stop the old worker (blocking on_stop, quit, wait — same pattern as
+closeEvent), detach the canvas non-destructively, build a new worker
+on a new QThread, rewire signals, start the new thread. On the new
+thread's engineReady, the canvas receives the new Database and reloads.
+
+The canvas detaches non-destructively (canvas.detach_for_file_switch)
+because switching away from a file must not delete its contents; only
+"New topology" (the empty-canvas context menu item) is destructive.
 """
 
 import sys
@@ -104,9 +115,6 @@ class MainWindow(QMainWindow):
         # ------------------------------------------------------------------
         # Central layout: header bar (fixed height) + canvas (fills rest)
         # ------------------------------------------------------------------
-        # The header replaces both the previous menu bar and the zoom
-        # sidebar. The canvas gets everything below the header, at full
-        # width. No sidebar reserves horizontal space.
         self.canvas = TopologyCanvas(self)
         self.header = HeaderBar(self)
 
@@ -118,153 +126,216 @@ class MainWindow(QMainWindow):
         central_layout.addWidget(self.canvas, 1)       # stretch: fills
         self.setCentralWidget(central)
 
-        # Header wiring. The zoom signals keep their old names, so only
-        # the receiving widget changed; the connections themselves are
-        # otherwise the same as the previous milestone.
+        # Header wiring.
         self.header.settingsRequested.connect(self._open_config_dialog)
         self.header.zoomRequested.connect(self.canvas.set_zoom)
         self.header.fitRequested.connect(self.canvas.fit_to_window)
         self.canvas.zoomChanged.connect(self.header.set_current_zoom)
 
-        # Default view for a fresh canvas. 75% is small enough that a
-        # handful of nodes placed near the origin do not crowd the
-        # window, and large enough that the grid and node labels are
-        # still legible. Overridden by load_topology()'s auto-fit when
-        # there is a saved topology to show; that is the intended
-        # precedence — fit-to-topology beats fit-to-default.
-        #
-        # Placed AFTER the zoomChanged -> set_current_zoom connection so
-        # that set_zoom()'s emitted zoomChanged signal reaches the header
-        # and updates the Zoom button's label. Setting the default zoom
-        # before the connection would leave the canvas at 75% but the
-        # label reading "Zoom 100 %".
+        # Default view for a fresh canvas. Placed AFTER the
+        # zoomChanged -> set_current_zoom connection so that set_zoom()'s
+        # emitted signal reaches the header and updates the label.
         self.canvas.set_zoom(0.75)
 
-        # Find feature: the header's find button opens the canvas's
-        # floating find bar. The bar itself (positioning, focus, match
-        # highlighting) is owned by the canvas; MainWindow only wires
-        # the button's signal to the canvas's public method.
+        # Find feature.
         self.header.findRequested.connect(self.canvas.show_find_bar)
 
-        # File menu (M9 Drop 2a): Save As. The header emits a signal;
-        # the handler lives here because it needs to know about the
-        # session and the file system.
+        # File menu (M9 Drop 2b). Three actions, all landing in this
+        # window because they need to know about the session, the file
+        # system, and the worker.
+        self.header.fileNewRequested.connect(self._file_new)
+        self.header.fileOpenRequested.connect(self._file_open)
         self.header.fileSaveAsRequested.connect(self._file_save_as)
 
         # ------------------------------------------------------------------
         # Shortcuts
         # ------------------------------------------------------------------
-        # Ctrl+0 resets the canvas zoom to 100%. Application-level so it
-        # works regardless of which child widget has focus.
         reset_zoom_shortcut = QShortcut(QKeySequence("Ctrl+0"), self)
         reset_zoom_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         reset_zoom_shortcut.activated.connect(self.canvas.reset_zoom)
 
-        # Ctrl+F opens the find bar. Application-level so it works from
-        # anywhere in the window, including when the canvas has focus.
         find_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
         find_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         find_shortcut.activated.connect(self.canvas.show_find_bar)
 
-        # Ctrl+H fits the view to the current topology — the "Home"
-        # action. Same as the "Fit" entry at the top of the header's
-        # zoom menu. Application-level so it works regardless of focus.
-        #
-        # Ctrl+H is chosen because it is unused elsewhere and its
-        # mnemonic ("H" for Home) is natural. Ctrl+0 is already taken by
-        # reset-to-100%-at-origin, which is a different operation: it
-        # snaps the transform to identity, whereas Fit computes a scale
-        # from the node bounding box. Both are useful; neither replaces
-        # the other.
         fit_shortcut = QShortcut(QKeySequence("Ctrl+H"), self)
         fit_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         fit_shortcut.activated.connect(self.canvas.fit_to_window)
 
-        # Ctrl+Shift+S = Save As. Application-level so the shortcut
-        # works from anywhere in the window, matching the convention
-        # used by most editors. The File menu entry does the same thing.
         save_as_shortcut = QShortcut(QKeySequence("Ctrl+Shift+S"), self)
         save_as_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         save_as_shortcut.activated.connect(self._file_save_as)
 
-        # ------------------------------------------------------------------
-        # Monitoring worker and thread
-        # ------------------------------------------------------------------
-        # The worker is created on the GUI thread, then moved to the worker
-        # thread. All its slots thereafter run on the worker thread. The
-        # canvas is told about the worker so it can register / unregister
-        # nodes as they are created and deleted.
-        self._worker_thread = QThread(self)
-        self._worker_thread.setObjectName("MonitoringWorkerThread")
+        new_shortcut = QShortcut(QKeySequence("Ctrl+N"), self)
+        new_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        new_shortcut.activated.connect(self._file_new)
 
-        # M9: the topology file to open is decided by the session, not
-        # hardcoded. session.load_last_path() returns the file the user
-        # last had open, or a sensible default on first run or if the
-        # stored path no longer exists. The path is passed to the worker
-        # so the engine constructs a Database pointed at the right file.
+        open_shortcut = QShortcut(QKeySequence("Ctrl+O"), self)
+        open_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        open_shortcut.activated.connect(self._file_open)
+
+        # ------------------------------------------------------------------
+        # Monitoring worker and thread — first construction
+        # ------------------------------------------------------------------
+        # These attributes are set by _start_worker. After construction,
+        # they are rebuilt from scratch by every file switch; nothing
+        # outside the restart machinery should hold a direct reference
+        # to the worker, the thread, or the topology path without going
+        # through the accessors (self._worker, self._worker_thread,
+        # self._topology_path).
         self._topology_path: str = session.load_last_path()
-        self._worker = MonitoringWorker(db_path=self._topology_path)
-        self._worker.moveToThread(self._worker_thread)
+        self._worker: MonitoringWorker | None = None
+        self._worker_thread: QThread | None = None
 
-        # Show the current file name in the title bar. Done before the
-        # event loop starts so the title is correct the moment the
-        # window appears.
         self._update_window_title()
 
-        # Lifecycle wiring.
-        #   thread.started       -> worker.on_thread_started
-        #   worker.engineReady   -> status bar update + persistence setup
-        #   worker.cycleComplete -> canvas.on_cycle_complete
-        #   worker.registerNode  -> worker.on_register_node
-        #   worker.unregisterNode -> worker.on_unregister_node
-        #   GUI close            -> worker.on_stop (blocking), then thread.quit/wait
-        #
-        # The `started` connection is explicitly queued. QThread.started is
-        # emitted from the newly started thread; a QueuedConnection ensures
-        # the slot runs on the worker thread's event loop rather than being
-        # dispatched synchronously inside the signal emission.
-        self._worker_thread.started.connect(
-            self._worker.on_thread_started,
-            Qt.ConnectionType.QueuedConnection,
-        )
-        self._worker.engineReady.connect(self._on_engine_ready)
-        self._worker.cycleComplete.connect(self.canvas.on_cycle_complete)
-
-        # The canvas emits registerNode / unregisterNode. Wire those signals
-        # to their slots on the worker. Cross-thread queued dispatch is
-        # automatic because the worker lives on the worker thread.
-        #
-        # These two connects are load-bearing: without them, every node
-        # the canvas creates would be silently dropped, engine.devices
-        # would stay empty, and no cycle would ever produce results.
-        self._worker.registerNode.connect(self._worker.on_register_node)
-        self._worker.unregisterNode.connect(self._worker.on_unregister_node)
-
-        self.canvas.attach_worker(self._worker)
-
-        # Persistence wiring (Milestone 8). When the worker's engine is
-        # ready, hand the canvas its Database and load the saved topology
-        # from it. The engineReady signal fires from the worker thread;
-        # the slot runs on the GUI thread via Qt's automatic queued
-        # dispatch. That ordering is why we connect here and not earlier:
-        # until engineReady fires, self._worker._engine is None and there
-        # is no Database to hand over.
-        self._worker.engineReady.connect(
-            self._on_engine_ready_for_persistence
-        )
-
-        self._worker_thread.start()
+        self._start_worker(self._topology_path)
 
         self.statusBar().showMessage("Starting monitoring engine…")
 
         # ------------------------------------------------------------------
         # First-run prompt for SMTP configuration
         # ------------------------------------------------------------------
-        # Deferred via a single-shot timer so it runs after the event loop
-        # has started and the window is shown. Opening a modal dialog
-        # during __init__ (before show()) can behave oddly on some
-        # platforms, notably Wayland; deferring is cheap and reliable.
         QTimer.singleShot(500, self._prompt_for_config_if_needed)
+
+    # ------------------------------------------------------------------
+    # Worker lifecycle
+    # ------------------------------------------------------------------
+
+    def _start_worker(self, db_path: str) -> None:
+        """
+        Construct a MonitoringWorker and a QThread for it, wire every
+        signal, and start the thread.
+
+        Called once from __init__ and again from
+        _restart_worker_with_new_path on every File -> New / Open /
+        Save As. The two cases are identical: the caller is responsible
+        for having stopped any previous worker and for having detached
+        the canvas, if applicable.
+
+        Stores the new worker on self._worker and the new thread on
+        self._worker_thread, replacing whatever was there.
+
+        The engineReady slot is _on_engine_ready_for_persistence, which
+        hands the canvas the new Database and loads the topology. That
+        is why the caller does not need to call canvas.set_database or
+        canvas.load_topology after this method: the worker's own startup
+        sequence triggers them, on the correct thread, at the correct
+        moment.
+        """
+        self._topology_path = db_path
+
+        self._worker_thread = QThread(self)
+        self._worker_thread.setObjectName("MonitoringWorkerThread")
+
+        self._worker = MonitoringWorker(db_path=db_path)
+        self._worker.moveToThread(self._worker_thread)
+
+        self._worker_thread.started.connect(
+            self._worker.on_thread_started,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self._worker.engineReady.connect(self._on_engine_ready)
+        self._worker.cycleComplete.connect(self.canvas.on_cycle_complete)
+        self._worker.registerNode.connect(self._worker.on_register_node)
+        self._worker.unregisterNode.connect(self._worker.on_unregister_node)
+        self._worker.engineReady.connect(
+            self._on_engine_ready_for_persistence
+        )
+
+        # Give the canvas the new worker so it can emit registerNode /
+        # unregisterNode at them. The DB handoff still happens later,
+        # in _on_engine_ready_for_persistence.
+        self.canvas.attach_worker(self._worker)
+
+        self._worker_thread.start()
+
+    def _stop_worker(self) -> None:
+        """
+        Stop the current worker and join its thread.
+
+        Mirrors the sequence in closeEvent. Called by the restart
+        machinery before building a new worker. Idempotent: safe to
+        call when there is no worker (which happens only during
+        construction, and there we don't call it at all).
+
+        Does not touch the canvas. The caller decides whether to detach
+        the canvas (file switch) or leave it alone (shutdown, which
+        discards everything anyway).
+        """
+        if self._worker is None or self._worker_thread is None:
+            return
+
+        QMetaObject.invokeMethod(
+            self._worker,
+            "on_stop",
+            Qt.ConnectionType.BlockingQueuedConnection,
+        )
+        self._worker_thread.quit()
+
+        wait_ms = max(30_000, self._shutdown_wait_ms() * 2)
+
+        if not self._worker_thread.wait(wait_ms):
+            print(
+                f"[worker-restart] old worker thread did not exit in "
+                f"{wait_ms}ms; forcing termination.",
+                file=sys.stderr,
+                flush=True,
+            )
+            self._worker_thread.terminate()
+            self._worker_thread.wait(1000)
+
+        # Drop the references. The QThread object itself is parented to
+        # self, so it will be destroyed with the window; deleteLater
+        # here to release it earlier and avoid accumulating one QThread
+        # per file switch.
+        self._worker_thread.deleteLater()
+        self._worker_thread = None
+        self._worker = None
+
+    def _restart_worker_with_new_path(self, new_path: str) -> None:
+        """
+        Switch the app to a different topology file.
+
+        Sequence:
+          1. Flush the canvas's pending debounced position saves. This
+             writes to the CURRENT Database, which is what we want: the
+             file we are leaving should be up to date.
+          2. Detach the canvas non-destructively (canvas.detach_for_file_switch).
+             This empties the scene and clears the canvas's DB reference
+             without deleting anything from the old file. It also emits
+             unregisterNode for every node, which the old worker picks
+             up before it is stopped.
+          3. Stop the old worker and join its thread.
+          4. Update the topology path and the session.
+          5. Start a new worker on the new path. That triggers the new
+             worker's engineReady, which hands the canvas the new
+             Database and loads the topology.
+
+        Between steps 3 and 5 the canvas has no worker, no DB, and an
+        empty scene. This window is milliseconds, and all of it runs on
+        the GUI thread, so the user cannot interact with the app during
+        it. The window is only visible in the sense that the scene is
+        empty for one frame.
+        """
+        # 1. Flush to the old file.
+        self.canvas.flush_pending_saves()
+
+        # 2. Non-destructive detach.
+        self.canvas.detach_for_file_switch()
+
+        # 3. Stop the old worker.
+        self._stop_worker()
+
+        # 4. Session.
+        session.save_last_path(new_path)
+        session.save_last_save_dir(str(Path(new_path).parent))
+
+        # 5. New worker. Its engineReady will call
+        #    _on_engine_ready_for_persistence, which sets the new DB on
+        #    the canvas and reloads.
+        self._start_worker(new_path)
+        self._update_window_title()
 
     # ------------------------------------------------------------------
     # Slots
@@ -280,19 +351,23 @@ class MainWindow(QMainWindow):
         Hand the worker's Database to the canvas and load the saved
         topology.
 
-        The Database instance is shared with the worker thread. That is
-        safe: Database uses threading.local for its connections, so the
-        GUI thread lazily creates and configures its own SQLite
-        connection on first access. No locking or handoff is required.
+        Called every time a worker becomes ready: on initial launch, and
+        again after every file switch (New, Open, Save As). The canvas
+        is already empty at this point — _restart_worker_with_new_path
+        called detach_for_file_switch before stopping the old worker —
+        so load_topology starts from a clean scene.
 
-        Called once, from the GUI thread, when the worker's engineReady
-        signal fires — at which point self._worker._engine exists and
-        self._worker.get_database() returns a live Database.
+        Database uses threading.local for its connections, so the same
+        instance is safe to hold on the GUI thread; the GUI thread
+        lazily creates its own SQLite connection on first access. No
+        locking or handoff is required.
 
         If get_database() returns None (should not happen given the
         engineReady contract), persistence is disabled for this session
         and a warning is printed. The rest of the app still works.
         """
+        if self._worker is None:
+            return
         db = self._worker.get_database()
         if db is None:
             print(
@@ -331,40 +406,192 @@ class MainWindow(QMainWindow):
     # File operations
     # ------------------------------------------------------------------
 
+    def _file_new(self) -> None:
+        """
+        File -> New. Ask for a target path, create an empty topology
+        file there, and switch to it.
+
+        The "new" file starts completely empty: no devices, no positions,
+        no connections. It is created by the new worker's
+        Database.__init__, which does CREATE TABLE IF NOT EXISTS for the
+        full schema. There is no separate "create the file" step; asking
+        the engine to open a path that does not yet exist creates it.
+
+        Confirmation: none. The current topology is not lost — it stays
+        in whatever file it was in. The user is starting a second
+        topology alongside the first, not replacing it. If the user
+        actually wanted to erase the current topology, that is what the
+        "New topology…" context menu item does.
+        """
+        start_dir = session.load_last_save_dir()
+        suggested = str(Path(start_dir) / "topology.npdb")
+        chosen, _ = QFileDialog.getSaveFileName(
+            self,
+            "New topology",
+            suggested,
+            "NetPulse topology (*.npdb);;SQLite database (*.db);;All files (*)",
+        )
+        if not chosen:
+            return
+
+        target = str(Path(chosen))
+
+        # If the file exists, refuse rather than overwrite: this is
+        # "New", not "Save As". If the user wants to overwrite an
+        # existing topology, they should use Open on it and then use
+        # the context menu's "New topology…" to clear it, or pick a
+        # different path here.
+        if Path(target).exists():
+            reply = QMessageBox.question(
+                self,
+                "Overwrite existing file?",
+                f"A file already exists at:\n\n{target}\n\n"
+                "New topology will replace its contents with an empty "
+                "topology. This cannot be undone.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            try:
+                Path(target).unlink()
+            except OSError as exc:
+                QMessageBox.warning(
+                    self,
+                    "New topology failed",
+                    f"Could not remove existing file:\n\n{target}\n\n{exc}",
+                )
+                return
+
+        self._restart_worker_with_new_path(target)
+        self.statusBar().showMessage(
+            f"New topology started at {Path(target).name}.", 5000
+        )
+
+    def _file_open(self) -> None:
+        """
+        File -> Open. Ask for a path, validate it looks like a NetPulse
+        topology, and switch to it.
+
+        Validation: the target must be an existing SQLite file that
+        contains a topology_positions table. That is the minimum
+        distinguishing feature of a desktop topology file; it rules out
+        a plain CLI database (no topology_positions), an arbitrary
+        SQLite file (no tables at all), and random non-database files
+        (SQLite refuses to open them). It does not rule out a NetPulse
+        file from a different version — that is fine, opening an older
+        file is a legitimate use.
+
+        The validation is deliberately a light check, not a migration.
+        If the file is a valid NetPulse topology but the schema is
+        older than what this build expects, Database.__init__ handles
+        the additive migrations (columns, tables) as it does for any
+        file it opens.
+        """
+        start_dir = session.load_last_save_dir()
+        chosen, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open topology",
+            start_dir,
+            "NetPulse topology (*.npdb);;SQLite database (*.db);;All files (*)",
+        )
+        if not chosen:
+            return
+
+        target = str(Path(chosen))
+
+        if not Path(target).exists():
+            QMessageBox.warning(
+                self,
+                "Open failed",
+                f"No such file:\n\n{target}",
+            )
+            return
+
+        # Validate: does it look like a NetPulse topology?
+        if not self._looks_like_topology_file(target):
+            QMessageBox.warning(
+                self,
+                "Open failed",
+                f"This file does not look like a NetPulse topology:\n\n"
+                f"{target}\n\n"
+                "Expected an SQLite database containing a "
+                "'topology_positions' table. Opening a file without "
+                "that table could corrupt it if it is a NetPulse CLI "
+                "or API database.",
+            )
+            return
+
+        # Same file as current? No-op.
+        try:
+            same = Path(target).resolve() == Path(self._topology_path).resolve()
+        except OSError:
+            same = False
+        if same:
+            self.statusBar().showMessage(
+                "Open: the chosen file is already the current topology.",
+                4000,
+            )
+            return
+
+        self._restart_worker_with_new_path(target)
+        self.statusBar().showMessage(
+            f"Opened {Path(target).name}.", 5000
+        )
+
+    @staticmethod
+    def _looks_like_topology_file(path: str) -> bool:
+        """
+        Return True if `path` is an SQLite file containing a
+        topology_positions table.
+
+        Uses a raw sqlite3 connection rather than the Database class so
+        that the check does not trigger migrations on the target file
+        before we have decided to open it. If validation fails, the
+        file is left untouched.
+
+        Any error (not a database, unreadable, empty) is treated as
+        "not a topology file" and returns False.
+        """
+        import sqlite3
+
+        try:
+            conn = sqlite3.connect(path)
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name='topology_positions'"
+                )
+                return cur.fetchone() is not None
+            finally:
+                conn.close()
+        except Exception:
+            return False
+
     def _file_save_as(self) -> None:
         """
-        Copy the current topology file to a user-chosen path, and switch
-        the session to point at the new file.
+        File -> Save As. Ask for a target path, copy the current
+        topology file to it, and switch to the copy.
 
-        What this does NOT do:
-          - It does not restart the worker. The running engine keeps
-            writing to the original _topology_path (the source of the
-            copy). Save As is a snapshot; the copy is what next launch
-            will open, but this session continues in the original.
-            To make the copy live immediately, the worker would need to
-            be stopped and rebuilt, which is the New/Open drop's job.
-          - It does not touch the canvas. The scene is unchanged; only
-            the file on disk and the session pointer move.
+        Because this now switches files (Drop 2b), the sequence is:
+          1. Flush pending saves so the source file is up to date.
+          2. Ask for a target path.
+          3. No-op if the target is the current file.
+          4. Copy the source to the target.
+          5. Restart the worker on the copy.
 
-        Order:
-          1. Flush pending position saves, so the source file is up to
-             date before we copy it.
-          2. Ask the user for a target path.
-          3. If the target is the current file, no-op (the user picked
-             the same name; nothing to do).
-          4. Copy the file.
-          5. Update the session.
-          6. Update the window title.
-          7. Status bar feedback.
+        The restart does everything else — clears the canvas, points the
+        session at the new file, updates the window title. The running
+        engine ends up reading and writing the copy, not the original.
 
-        A future drop will extend this so that after Save As the running
-        worker switches to the new file. For now, the copy is dormant
-        until the next launch.
-
-        Failures (permission denied, disk full, source file missing) are
-        reported in a QMessageBox and do not change state.
+        Overwrite: allowed silently. Save As is the standard
+        overwrite-a-file operation in every editor, and users expect it
+        to overwrite after the OS's own "file exists" confirmation in
+        the file dialog. That confirmation is what QFileDialog provides
+        by default.
         """
-        # 1. Flush the source before copying.
+        # 1. Flush the source.
         self.canvas.flush_pending_saves()
 
         source = self._topology_path
@@ -386,7 +613,7 @@ class MainWindow(QMainWindow):
             "NetPulse topology (*.npdb);;SQLite database (*.db);;All files (*)",
         )
         if not chosen:
-            return  # user cancelled
+            return
 
         target = str(Path(chosen))
 
@@ -413,20 +640,10 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # 5. Session.
-        session.save_last_path(target)
-        session.save_last_save_dir(str(Path(target).parent))
-        self._topology_path = target
-
-        # 6. Title.
-        self._update_window_title()
-
-        # 7. Feedback.
+        # 5. Switch.
+        self._restart_worker_with_new_path(target)
         self.statusBar().showMessage(
-            f"Topology saved as {Path(target).name}. "
-            f"This session continues using the previous file; "
-            f"next launch will open the new one.",
-            8000,
+            f"Saved as {Path(target).name} and switched to it.", 5000
         )
 
     # ------------------------------------------------------------------
@@ -504,98 +721,42 @@ class MainWindow(QMainWindow):
         Stop the worker cooperatively, then quit and join the thread.
 
         Order and mechanism:
-          0. Flush any pending debounced position saves. This is a
-             Milestone 8 addition and must happen before the worker is
-             stopped, because the flush writes through the Database
-             instance and we want that write to complete while the
-             application is still live. flush_pending_saves() is a
-             no-op if nothing is pending and a no-op if persistence
-             was never enabled.
+          0. Flush any pending debounced position saves. Must happen
+             before the worker is stopped, so the write goes through a
+             live Database instance rather than racing teardown.
           1. Invoke worker.on_stop BLOCKING on the worker thread. This
              runs the timer stop + deleteLater + reference drop to
              completion before we return, so the worker's QTimer is
              actually gone by the time the thread's event loop exits.
-             This is the difference between a clean shutdown and one
-             where the QTimer survives to be finalized by the main
-             thread during interpreter teardown, producing the
-             "QObject::killTimer: Timers cannot be stopped from another
-             thread" warnings.
           2. Quit the thread's event loop.
           3. Wait for the thread to exit, using a generously derived
              timeout. If the wait fails, fall back to terminate(), which
              is documented as unsafe but is still preferable to a hung
              application.
 
-        Why BlockingQueuedConnection and not a signal emit: emitting a
-        queued signal returns immediately and the queued slot invocation
-        is merely *enqueued* on the worker thread's event queue. A
-        subsequent thread.quit() is also enqueued. There is no ordering
-        guarantee between the two beyond FIFO, and more importantly no
-        guarantee that the stop slot has actually *run* by the time the
-        thread's event loop processes the quit. A race is possible in
-        which quit is processed first and the timer is left un-stopped.
-        BlockingQueuedConnection removes the race: the caller waits until
-        the slot has finished executing on the worker thread.
+        The BlockingQueuedConnection on step 1 is what makes deleteLater
+        effective: without blocking, quit() could be processed by the
+        worker thread's event loop before the stop slot ran, leaving the
+        timer alive and eventually finalized by the main thread during
+        interpreter teardown — the "QObject::killTimer: Timers cannot be
+        stopped from another thread" warnings.
 
-        On the terminate() fallback: QThread.terminate() is documented as
-        unsafe and can, if called while the target thread is executing
-        Python bytecode or a C extension, corrupt the interpreter state
-        and produce a SIGSEGV on exit. The wait timeout above is derived
-        from the ping parameters and then doubled with a 30-second floor,
-        which makes reaching this fallback in practice a sign that
-        something is genuinely wrong — likely a kernel-level network
-        freeze or a subprocess that will never return. If it is reached,
-        it is logged loudly to stderr and reported to the user via a
-        modal dialog so the failure is not silent.
+        On the terminate() fallback: QThread.terminate() is documented
+        as unsafe and can corrupt the interpreter if called while the
+        target thread is executing Python bytecode or a C extension. The
+        wait timeout above is derived from the ping parameters and then
+        doubled with a 30-second floor, which makes reaching this
+        fallback in practice a sign that something is genuinely wrong.
+        If it is reached, it is logged loudly to stderr and reported to
+        the user via a modal dialog so the failure is not silent.
         """
 
-        # Persistence flush. Before the worker stops, so the write goes
-        # through a live Database instance rather than racing teardown.
+        # Persistence flush. Before the worker stops.
         self.canvas.flush_pending_saves()
 
-        QMetaObject.invokeMethod(
-            self._worker,
-            "on_stop",
-            Qt.ConnectionType.BlockingQueuedConnection,
-        )
-
-        self._worker_thread.quit()
-
-        # The derived timeout is generous on its own; doubling it and
-        # imposing a 30-second floor makes the fallback reachable only
-        # when the environment is genuinely pathological. This is
-        # deliberate: the alternative — a tighter timeout that fires
-        # sometimes — would put the unsafe terminate() path on the
-        # routine path, which is exactly what the shutdown redesign was
-        # meant to eliminate.
-        wait_ms = max(30_000, self._shutdown_wait_ms() * 2)
-
-        if not self._worker_thread.wait(wait_ms):
-            # Reaching this branch means the worker thread did not exit
-            # within the (very generous) timeout. Log loudly and warn the
-            # user before doing anything drastic, so the failure is
-            # visible rather than silent.
-            print(
-                f"[SHUTDOWN-FAILURE] worker thread did not exit in "
-                f"{wait_ms}ms; forcing termination. This indicates the "
-                f"derived timeout was wrong for this environment. "
-                f"Please report this.",
-                file=sys.stderr,
-                flush=True,
-            )
-            QMessageBox.warning(
-                self,
-                "Shutdown problem",
-                "The monitoring worker thread did not stop cleanly within "
-                f"{wait_ms // 1000} seconds and was forcibly terminated.\n\n"
-                "The application will now exit, but this indicates a "
-                "problem with the environment that may cause unreliable "
-                "shutdown behaviour.\n\n"
-                "If you can, please note what was happening at the time "
-                "(very slow network? a device that never responds?) and "
-                "report it.",
-            )
-            self._worker_thread.terminate()
-            self._worker_thread.wait(1000)
+        # Reuse the restart machinery's stop helper. It does exactly the
+        # same sequence, and having one place for the shutdown logic
+        # means a fix to one is a fix to both.
+        self._stop_worker()
 
         super().closeEvent(event)

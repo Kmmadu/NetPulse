@@ -46,6 +46,20 @@ auto-fit, so the user always ends up seeing their nodes framed. The
 default matters only for the empty-canvas case, where auto-fit has
 nothing to fit and would otherwise leave the view at whatever scale the
 transform happens to be.
+
+Milestone 8 (view, fix): the default-zoom call is placed AFTER the
+zoomChanged -> set_current_zoom connection. Setting it before meant the
+canvas was at 75% but the header label stayed at "Zoom 100 %", because
+the signal that would have updated the label had no subscriber at emit
+time.
+
+Milestone 9: the topology file to open is decided by the session, not
+hardcoded. MainWindow calls session.load_last_path() at construction,
+which returns the file the user last had open, or a default if there is
+no session or the stored path no longer exists. That path is passed to
+MonitoringWorker, which passes it to MonitoringEngine, which opens a
+Database pointed at it. File -> Open and File -> Save As (in a later
+drop) update the session via session.save_last_path().
 """
 
 import sys
@@ -55,6 +69,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtCore import QThread, Qt, QMetaObject, QTimer
+
+import session
 
 from ui.canvas import TopologyCanvas
 from ui.header_bar import HeaderBar
@@ -85,14 +101,6 @@ class MainWindow(QMainWindow):
         self.canvas = TopologyCanvas(self)
         self.header = HeaderBar(self)
 
-        # Default view for a fresh canvas. 75% is small enough that a
-        # handful of nodes placed near the origin do not crowd the
-        # window, and large enough that the grid and node labels are
-        # still legible. Overridden by load_topology()'s auto-fit when
-        # there is a saved topology to show; that is the intended
-        # precedence — fit-to-topology beats fit-to-default.
-        self.canvas.set_zoom(0.75)
-
         central = QWidget(self)
         central_layout = QVBoxLayout(central)
         central_layout.setContentsMargins(0, 0, 0, 0)
@@ -108,6 +116,20 @@ class MainWindow(QMainWindow):
         self.header.zoomRequested.connect(self.canvas.set_zoom)
         self.header.fitRequested.connect(self.canvas.fit_to_window)
         self.canvas.zoomChanged.connect(self.header.set_current_zoom)
+
+        # Default view for a fresh canvas. 75% is small enough that a
+        # handful of nodes placed near the origin do not crowd the
+        # window, and large enough that the grid and node labels are
+        # still legible. Overridden by load_topology()'s auto-fit when
+        # there is a saved topology to show; that is the intended
+        # precedence — fit-to-topology beats fit-to-default.
+        #
+        # Placed AFTER the zoomChanged -> set_current_zoom connection so
+        # that set_zoom()'s emitted zoomChanged signal reaches the header
+        # and updates the Zoom button's label. Setting the default zoom
+        # before the connection would leave the canvas at 75% but the
+        # label reading "Zoom 100 %".
+        self.canvas.set_zoom(0.75)
 
         # Find feature: the header's find button opens the canvas's
         # floating find bar. The bar itself (positioning, focus, match
@@ -154,7 +176,13 @@ class MainWindow(QMainWindow):
         self._worker_thread = QThread(self)
         self._worker_thread.setObjectName("MonitoringWorkerThread")
 
-        self._worker = MonitoringWorker()
+        # M9: the topology file to open is decided by the session, not
+        # hardcoded. session.load_last_path() returns the file the user
+        # last had open, or a sensible default on first run or if the
+        # stored path no longer exists. The path is passed to the worker
+        # so the engine constructs a Database pointed at the right file.
+        self._topology_path: str = session.load_last_path()
+        self._worker = MonitoringWorker(db_path=self._topology_path)
         self._worker.moveToThread(self._worker_thread)
 
         # Lifecycle wiring.

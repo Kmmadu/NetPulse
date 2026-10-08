@@ -9,10 +9,11 @@ Design:
     methods directly from the GUI thread; use the signals and the
     blocking-invoke pattern declared below.
   - The worker owns a MonitoringEngine constructed with the desktop
-    database file (desktop/data/desktop_monitor.db). As of Milestone 8,
-    this file is NOT deleted at session start: it is the persistent
-    store the canvas loads its topology from on startup, and writes to
-    on every add, delete, edit, move, and connection change.
+    database file. As of Milestone 9, that path is not hardcoded: it is
+    supplied by MainWindow (via session.load_last_path) so that File ->
+    Open can point the app at a different topology file at runtime. The
+    module-level _DEFAULT_DB_PATH below is the fallback used only when
+    no explicit path is passed.
 
     Important sequencing note: MonitoringEngine.__init__ runs its own
     load_devices_from_db() and _run_initial_state_check() before
@@ -97,11 +98,15 @@ from app.models.device import Device, DeviceStatus  # noqa: E402
 from app.core.monitor_engine import MonitoringEngine  # noqa: E402
 
 
-# Where the desktop app keeps its monitoring database. Relative to
-# desktop/ because the desktop app is launched from there. As of
-# Milestone 8 this file is persistent: it holds the topology the canvas
-# saves and loads. Created automatically by Database.__init__ on first use.
-_DB_PATH = str(Path(__file__).resolve().parent / "data" / "desktop_monitor.db")
+# Default path for the desktop app's monitoring database. Used only when
+# no db_path is passed to MonitoringWorker.__init__. As of M9, the actual
+# path is decided at startup by MainWindow (via session.load_last_path)
+# and passed in, so this constant is the fallback for tests and for any
+# caller that has not yet been updated. The desktop app proper always
+# passes an explicit path.
+_DEFAULT_DB_PATH = str(
+    Path(__file__).resolve().parent / "data" / "desktop_monitor.db"
+)
 
 # How often the worker runs a full check cycle. 5 seconds: fast enough that
 # a newly added node turns green on the second cycle within ~10 seconds of
@@ -157,8 +162,16 @@ class MonitoringWorker(QObject):
     unregisterNode = Signal(str)           # device_id
     stop = Signal()
 
-    def __init__(self, parent: Optional[QObject] = None):
+    def __init__(
+        self,
+        db_path: Optional[str] = None,
+        parent: Optional[QObject] = None,
+    ):
         super().__init__(parent)
+        # The topology file this worker's engine will read and write.
+        # Passing None keeps the pre-M9 default; the desktop app always
+        # passes an explicit path from the session.
+        self._db_path: str = db_path if db_path else _DEFAULT_DB_PATH
         self._engine: Optional[MonitoringEngine] = None
         self._timer: Optional[QTimer] = None
         # Set by on_stop(). Checked by _on_tick() before starting a cycle.
@@ -198,7 +211,7 @@ class MonitoringWorker(QObject):
         creation to the next event-loop turn, by which point the loop is
         definitely live.
         """
-        self._engine = MonitoringEngine(db_path=_DB_PATH)
+        self._engine = MonitoringEngine(db_path=self._db_path)
         # The engine's constructor has already loaded devices from the DB
         # and pinged them in its initial state check. Clear the dict so
         # subsequent cycles only ping what the canvas registers. This

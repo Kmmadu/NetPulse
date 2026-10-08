@@ -8,77 +8,119 @@
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104-blue.svg)](https://fastapi.tiangolo.com)
 
-**NetPulse** is a lightweight, self-hosted network monitoring system that alerts you via email when devices go down and when they come back up. It is designed for network engineers, ISPs, and IT teams who need a simple and reliable monitoring solution without heavy infrastructure.
+## What it does
+
+NetPulse pings devices over ICMP, tracks their up/down state, sends
+email alerts on down, recovery, and flapping events, and stores
+everything in SQLite.
+
+You get three ways to use it:
+
+- **Desktop GUI** — build a network topology by dragging device nodes
+  onto a canvas, connect them, and watch live status update in place.
+  Per-topology save/open. This is the newest front end and the one
+  most worth a look.
+- **Web dashboard** — a FastAPI + Jinja view of the same data, intended
+  for multi-user access.
+- **CLI** — monitor a fleet from the terminal.
+
+All three share the same core: the `Device` state machine, the
+`MonitoringEngine`, the `AlertServiceV2`, and the SQLite schema.
 
 ---
 
-## Features
+## Desktop GUI
 
-| Feature | Description |
-|--------|------------|
-| Real-time Monitoring | Ping devices at configurable intervals |
-| Email Alerts | Instant notifications for DOWN and RECOVERY events |
-| Downtime Tracking | Calculates how long outages last |
-| Recovery Detection | Alerts when devices come back online |
-| Web Dashboard | View device status in a browser |
-| Smart Cooldown | Prevents alert spam |
-| Flapping Detection | Detects unstable devices |
+The desktop app is a PySide6 application that reuses NetPulse's
+monitoring core.
+
+**Features**
+
+- Drag-and-drop device nodes: Router, Switch, Server, PC, Generic
+- Connections between nodes; edges follow nodes as they're dragged
+- Live ICMP status: colour ring per node reflects UP / DEGRADED /
+  DOWN / UNKNOWN, and link quality severity
+- Per-topology SQLite files — save and open multiple topologies
+  (office, datacentre, lab)
+- Zoom, pan, find-by-name, fit-to-window
+- Email alerts via the shared `AlertServiceV2`
+
+**Install (Linux, no sudo)**
+
+    git clone https://github.com/Kmmadu/NetPulse.git
+    cd NetPulse
+    bash network-monitor/desktop/install.sh
+
+This installs under `~/.local/`, adds a NetPulse entry to your
+applications menu, and provides a `netpulse` command.
+
+**Run**
+
+    netpulse
+
+Or launch "NetPulse" from your applications menu.
+
+**Uninstall**
+
+    bash network-monitor/desktop/install.sh --uninstall
 
 ---
 
-## How It Works
+## Web dashboard
 
-1. Add devices (name + IP address)
-2. NetPulse continuously monitors them using ICMP (ping)
-3. Alerts are triggered only on meaningful state changes
+A FastAPI backend and a small Jinja-rendered frontend for viewing
+device status in a browser. Intended for shared use.
 
-**Flow:**
-Device goes DOWN → Alert sent → Device recovers → Recovery alert with downtime
+<!-- SCREENSHOT: web dashboard. If you want to keep the existing
+     dashboard.png, save it to network-monitor/web/docs/screenshot.png
+     and reference it here. Otherwise remove this block. -->
+
+---
+
+## CLI
+
+Run monitoring and device management from the terminal. See
+`network-monitor/cli/`.
 
 ---
 
-## Quick Start
+## Repo layout
 
-### One-Command Install (Recommended)
-
-```bash
-git clone https://github.com/Kmmadu/NetPulse.git
-cd NetPulse
-chmod +x install.sh
-./install.sh
-```
+    NetPulse/
+    └── network-monitor/
+        ├── app/          Core: Device model, MonitoringEngine,
+        │                 AlertServiceV2, Database
+        ├── cli/          Command-line interface
+        ├── web/          FastAPI dashboard
+        ├── desktop/      PySide6 desktop GUI (see above)
+        └── requirements.txt
 
 ---
-## Manual Installation
 
-```
-# Clone repository
-git clone https://github.com/Kmmadu/NetPulse.git
-cd NetPulse
+## How the desktop app is built
 
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
+- **Canvas** — `desktop/ui/canvas.py` is a `QGraphicsView` with
+  draggable `DeviceNode` items and `ConnectionItem` edges. Edges
+  are clipped to the gap between node rects and do not intercept
+  mouse events, so connected nodes stay draggable.
+- **Worker** — `desktop/monitoring_worker.py` runs
+  `MonitoringEngine` on a `QThread`. Per-cycle results are
+  delivered as a queued Qt signal; the GUI thread never touches
+  worker state.
+- **Persistence** — every add, edit, move, and connection writes
+  through to a per-topology SQLite file. Position changes are
+  debounced so a drag writes once, not once per pixel.
+- **File switching** — opening a different topology restarts the
+  worker (the engine holds a `Database` for its lifetime) and
+  reloads the canvas.
 
-# Install dependencies
-pip install -r network-monitor/requirements.txt
-
-# Setup environment variables
-cp .env.example .env
-nano .env
-
-# Start API
-python api_run.py
-
-# Start frontend
-cd web
-python3 -m http.server 8080
-```
 ---
 
 ## Configuration
 
-### Edit `.env`
+SMTP credentials and alert cooldowns are set in `.env`. For the
+desktop app, use **Settings → SMTP Configuration** in the app.
+For the web and CLI, copy `.env.example` to `.env` and edit.
 
 ```env
 SMTP_SERVER=smtp.gmail.com
@@ -92,8 +134,7 @@ ALERTS_ENABLED=true
 ALERT_DOWN_COOLDOWN=5
 ALERT_RECOVERY_COOLDOWN=5
 ALERT_ERRATIC_COOLDOWN=30
-PREMIUM_MODE=false
-```
+
 ---
 
 ## Gmail Setup (App Password)
@@ -105,121 +146,41 @@ PREMIUM_MODE=false
 
 ---
 
-## Service Management (Systemd)
+## Demo Video 
 
-```
-# Check status
-sudo systemctl status netpulse-api netpulse-monitor
 
-# View logs
-sudo journalctl -u netpulse-api -f
-
-# Restart
-sudo systemctl restart netpulse-api netpulse-monitor
-
-# Stop
-sudo systemctl stop netpulse-api netpulse-monitor
-
-```
----
-
-## Backup & Restore
-
-```
-# Manual backup
-./scripts/backup.sh
-
-# Backups stored in:
-./backups/
-
-# Automatic backup runs daily (cron)
-
-```
----
-
-## Email Alert Examples
-
-### Device Down
-
-Subject: [NetPulse] Device Down – Core Router
-
-Device: Core Router
-IP Address: 10.0.0.1
-Status: DOWN
-Time: 10:32 PM
-
-### Device Recovery
-
-Subject: [NetPulse] Device Restored – Core Router
-
-Device: Core Router
-Status: ONLINE
-Recovered At: 10:37 PM
-Downtime: 5 minutes
 
 ---
 
-## Project Structure
+### Tests
 
 ```
-NetPulse/
-├── network-monitor/
-│ ├── app/ # Backend logic
-│ ├── web/ # Frontend UI
-│ ├── data/ # SQLite database
-│ └── requirements.txt
-├── scripts/
-├── backups/
-├── install.sh
-└── README.md
+cd network-monitor/desktop
+python3 test_drop0a.py
+
 ```
+
 ---
 
-## Troubleshooting
+### Use cases
 
-### API not starting
 
-```
-sudo fuser -k 8000/tcp
-sudo systemctl restart netpulse-api
-```
 
-### No email alerts
-```
-python -c "from app.services.alert_v2 import AlertServiceV2; AlertServiceV2().send_test_alert()"
-```
+---
 
-### Devices stuck in UNKNOWN
-
-* Start monitoring from dashboard
-* Wait for first check cycle
-
-### Check database
-```
-sqlite3 data/monitor.db "SELECT * FROM devices;"
-
-```
-### Uninstall
-
-```
-./uninstall.sh
-
-```
 ### Roadmap
 
-* Availability reports (Premium)
+* Availability reports
 * Historical graphs
-* Slack/Teams notifications
+* Slack / Teams notifications
 * SMS alerts
 * SNMP monitoring
-* Multi-location monitoring
 
 ### Use Cases
 
-* ISP device monitoring
-* Network uptime tracking
-* Internal infrastructure monitoring
-* Lightweight alternative to PRTG/Zabbix
+* ISP and small-datacentre device monitoring
+* Internal infrastructure uptime tracking
+* A lightweight alternative to heavier NMS tools
 
 ---
 

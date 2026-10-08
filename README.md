@@ -1,4 +1,4 @@
-![NetPulse desktop — topology canvas](network-monitor/desktop/docs/dashboard.png)
+![NetPulse desktop — topology canvas](network-monitor/desktop/docs/screenshot-main.png)
 
 # NetPulse - Network Monitoring System
 
